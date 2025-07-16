@@ -1,0 +1,7 @@
+
+numpy>=1.26
+scipy>=1.13
+matplotlib>=3.9
+scikit-image>=0.23
+nptdms>=1.7
+tqdm>=4.66
