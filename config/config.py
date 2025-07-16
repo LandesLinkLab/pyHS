@@ -1,17 +1,23 @@
+import os
+import sys
+from pathlib import Path
 
-DATA_DIR        = "raw/"
-WHITE_FILE      = "wc1.tdms"
-DARK_FILE       = "dc1.tdms"
-OUTPUT_DIR      = "results/"
+home = str(Path.home())
+args = dict()
 
-CROP_RANGE_NM   = (450, 800)
-BACKGROUND_PERC = 0.01
+args['DATA_DIR'] = os.path.join(home, 'dataset/pyhs/raw')
+args['WHITE_FILE'] = os.path.join(DATA_DIR, "wc1.tdms")
+args['DARK_FILE'] = os.path.join(DATA_DIR, "dc1.tdms")
+args['OUTPUT_DIR'] = os.path.join(DATA_DIR, "results")
 
-THRESH_HIGH     = 0.25
-MIN_PIXELS_CLUS = 4
-PEAK_TOL_NM     = 10.0
-REP_CRITERION   = "max_int"
+args['CROP_RANGE_NM'] = (450, 800)
+args['BACKGROUND_PERC'] = 0.01
 
-MAX_PEAKS       = 1
-RSQ_MIN         = 0.90
-FIG_DPI         = 300
+args['THRESH_HIGH'] = 0.25
+args['MIN_PIXELS_CLUS'] = 4
+args['PEAK_TOL_NM'] = 10.0
+args['REP_CRITERION'] = "max_int"
+
+args['MAX_PEAKS'] = 1
+args['RSQ_MIN'] = 0.90
+args['FIG_DPI'] = 300

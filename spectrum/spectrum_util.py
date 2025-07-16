@@ -1,5 +1,5 @@
-
 import numpy as np
+
 def get_peak(spec, wavelengths):
     idx = int(np.argmax(spec))
     return float(wavelengths[idx]), float(spec[idx])

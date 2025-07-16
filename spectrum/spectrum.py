@@ -1,7 +1,12 @@
-
+import os
+import timeit
+import pickle
+import numpy as np
 from pathlib import Path
-import gzip, pickle
-from . import spectrum_util as su
+import matplotlib.pyplot as plt
+from typing import List, Dict, Tuple, Optional, Any, Union
+
+import spectrum_util as su
 
 class SpectrumAnalyzer:
     def __init__(self, dataset, cfg):
@@ -35,11 +40,11 @@ class SpectrumAnalyzer:
         su.save_markers(self.ds.rgb, self.reps,
                         out_dir / f"{self.ds.sample_name}_markers.png")
 
-    def dump_pickle(self):
-        out = Path(self.cfg.OUTPUT_DIR) / f"{self.ds.sample_name}.pkl.gz"
+    def dump_pkl(self):
+        out = Path(self.cfg.OUTPUT_DIR) / f"{self.ds.sample_name}.pkl"
         payload = dict(sample=self.ds.sample_name,
                        wavelengths=self.ds.wvl,
                        reps=self.results,
                        cfg=dict(vars(self.cfg)))
-        with gzip.open(out, "wb", compresslevel=5) as f:
-            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(out, "wb") as f:
+            pkl.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)

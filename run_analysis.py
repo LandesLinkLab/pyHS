@@ -1,23 +1,17 @@
-
-#!/usr/bin/env python
-"""
-Entry-point:
-    python run_analysis.py --sample AuNR_PMMA_1
-"""
+import os
+import sys
+import pickle
+import codecs
 import argparse
-from config import config as cfg
+import torch
+from typing import List, Dict, Tuple, Set, Union, Optional, Any, Callable, TextIO
+
+# from config import config as cfg
 from data.dataset import Dataset
 from data.spectrum import SpectrumAnalyzer
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--sample", required=True,
-                    help="basename without extension (e.g. AuNR_PMMA_1)")
-    ap.add_argument("--image_shape", nargs=2, type=int,
-                    metavar=("ROWS", "COLS"),
-                    help="override automatic image-size detection")
-    args = ap.parse_args()
+def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
 
     ds = Dataset(sample_name=args.sample,
                  cfg=cfg,
@@ -36,4 +30,18 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sample", required=True,
+                    help="basename without extension (e.g. AuNR_PMMA_1)")
+    parser.add_argument("--image_shape", nargs=2, type=int,
+                    metavar=("ROWS", "COLS"),
+                    help="override automatic image-size detection")
+    
+    opt = vars(parser.parse_args())
+    
+    with codecs.open(opt['config'], 'r', encoding='UTF-8') as fs:
+
+        exec(fs.read())
+
+    main(opt, args)
