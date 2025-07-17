@@ -4,32 +4,35 @@ import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
 
 def get_peak(spec, wavelengths):
+
     idx = int(np.argmax(spec))
 
     return float(wavelengths[idx]), float(spec[idx])
 
-def pick_representatives(cube, labels, wavelengths, cfg):
+def pick_representatives(cube, labels, wavelengths, config):
+
     reps = []
+
     for lab in np.unique(labels):
 
         if lab == 0: continue
 
         coords = np.argwhere(labels == lab)
 
-        if coords.shape[0] < cfg.MIN_PIXELS_CLUS: continue
+        if coords.shape[0] < config.MIN_PIXELS_CLUS: continue
 
         peak_pos = np.array([get_peak(cube[r, c], wavelengths)[0] for r, c in coords])
 
-        if peak_pos.std() > cfg.PEAK_TOL_NM: continue
+        if peak_pos.std() > config.PEAK_TOL_NM: continue
 
         ints = np.array([get_peak(cube[r, c], wavelengths)[1] for r, c in coords])
-        sel = ints.argmax() if cfg.REP_CRITERION == "max_int" else 0
+        sel = ints.argmax() if config.REP_CRITERION == "max_int" else 0
         r_sel, c_sel = map(int, coords[sel])
         reps.append(dict(row=r_sel, col=c_sel, wl_peak=float(peak_pos[sel]), intensity=float(ints[sel])))
 
     return reps
 
-def fit_lorentz(y, x, cfg):
+def fit_lorentz(y, x, config):
     
     def lorentz(x, a, x0, g): 
 
@@ -38,6 +41,7 @@ def fit_lorentz(y, x, cfg):
     idx = int(np.argmax(y)); p0 = [float(y[idx]), float(x[idx]), 20.0]
     
     try:
+        
         popt,_ = curve_fit(lorentz, x, y, p0=p0, maxfev=10000)
         y_fit = lorentz(x, *popt)
         rsq = 1 - np.sum((y-y_fit)**2)/np.sum((y-y.mean())**2)

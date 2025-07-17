@@ -5,27 +5,25 @@ import codecs
 import argparse
 from typing import List, Dict, Tuple, Set, Union, Optional, Any, Callable, TextIO
 
-# from config import config as cfg
+# from config import config as config
 from data.dataset import Dataset
 from data.spectrum import SpectrumAnalyzer
 
 
 def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
 
-    ds = Dataset(sample_name=args.sample,
-                 cfg=cfg,
-                 image_shape=tuple(args.image_shape) if args.image_shape else None)
-    ds.load_cube()
-    ds.flatfield()
-    ds.preprocess()
-    ds.detect_particles()
+    os.path
 
-    sa = SpectrumAnalyzer(ds, cfg)
-    sa.select_representatives()
-    sa.fit_and_plot()
-    sa.dump_pickle()
+    dataset = Dataset(args,
+                    sample_name=opt['sample'],
+                    image_shape=tuple(opt['image_shape']) if opt['image_shape'] else None)
+    
+    dataset.run_dataset()
 
-    print(f"[✓] Completed  ▶  outputs saved in {cfg.OUTPUT_DIR}")
+    spectrum_analysis = SpectrumAnalyzer(dataset, config)
+
+
+    print(f"[info] Completed  ▶  outputs saved in {config.OUTPUT_DIR}")
 
 
 if __name__ == "__main__":
@@ -35,9 +33,6 @@ if __name__ == "__main__":
                         type = str,
                         required = True,
                         help = "Path to the configuration file")
-    parser.add_argument("--sample", 
-                        required=True,
-                        help="basename without extension (e.g. AuNR_PMMA_1)")
     parser.add_argument("--image_shape", 
                         nargs=2, 
                         type=int,
