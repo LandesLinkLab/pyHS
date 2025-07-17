@@ -3,7 +3,6 @@ import sys
 import pickle
 import codecs
 import argparse
-import torch
 from typing import List, Dict, Tuple, Set, Union, Optional, Any, Callable, TextIO
 
 # from config import config as cfg
@@ -32,11 +31,18 @@ def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sample", required=True,
-                    help="basename without extension (e.g. AuNR_PMMA_1)")
-    parser.add_argument("--image_shape", nargs=2, type=int,
-                    metavar=("ROWS", "COLS"),
-                    help="override automatic image-size detection")
+    parser.add_argument('--config',
+                        type = str,
+                        required = True,
+                        help = "Path to the configuration file")
+    parser.add_argument("--sample", 
+                        required=True,
+                        help="basename without extension (e.g. AuNR_PMMA_1)")
+    parser.add_argument("--image_shape", 
+                        nargs=2, 
+                        type=int,
+                        metavar=("ROWS", "COLS"),
+                        help="override automatic image-size detection")
     
     opt = vars(parser.parse_args())
     
