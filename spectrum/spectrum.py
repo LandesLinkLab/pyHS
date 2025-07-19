@@ -64,6 +64,10 @@ class SpectrumAnalyzer:
                         out_dir / f"{self.dataset.sample_name}_markers.png",
                         dpi=self.args["FIG_DPI"])
 
+        su.dump_mapping_diagnostic(self.dataset.cube,
+                                self.reps,
+                                out_dir / f"{self.dataset.sample_name}_mapping_dbg.png")
+
     def dump_pkl(self):
 
         out = Path(self.args['OUTPUT_DIR']) / f"{self.dataset.sample_name}.pkl"

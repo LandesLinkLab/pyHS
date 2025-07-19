@@ -108,6 +108,9 @@ def tdms_to_cube(path: Path, image_shape: Optional[Tuple[int,int]] = None):
                 n_cols = int(bot - top + 1)
                 n_rows = int(strips)
 
+                # n_rows = int(bot - top + 1)
+                # n_cols = int(strips)
+
                 if n_rows * n_cols == N:
 
                     rows, cols = n_rows, n_cols
@@ -134,11 +137,22 @@ def tdms_to_cube(path: Path, image_shape: Optional[Tuple[int,int]] = None):
 
                 raise RuntimeError("[error] Cannot infer image size")
 
-    # 이제 reshape
-    specs.sort(key=lambda c: c.name)
-    # cube = np.vstack([ch[:] for ch in specs]).reshape(rows, cols, len(wl))
-    # cube = np.vstack([ch[:] for ch in specs]).reshape((rows, cols, len(wl)), order='F')
-    cube = np.vstack([ch[:] for ch in specs]).reshape((cols, rows, len(wl))).transpose(1, 0, 2)
+    if row_props and col_props:
+
+        cube = np.empty((rows, cols, len(wl)), dtype = np.float32)
+
+        for ch in specs:
+
+            r = ch.properties["NI_ArrayRow"]
+            c = ch.properties["NI_ArrayColumn"]
+            cube[r, c, :] = ch[:]
+
+    else:
+
+        specs.sort(key = lambda c: c.name)
+        arr  = np.stack([ch[:] for ch in specs], axis=0)
+        cube = arr.reshape((rows, cols, -1), order='F')
+
 
     return cube.astype(np.float32), wl.astype(np.float32)
 

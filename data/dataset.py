@@ -18,6 +18,8 @@ class Dataset(object):
         self.sample_name = args['SAMPLE_NAME']
 
         self.cube = None   # ndarray (H,W,λ)
+        self.cube_raw = None
+        self.cube_corr = None
         self.wvl = None    # ndarray (λ,)
         self.rgb = None
         self.labels = None
@@ -26,8 +28,8 @@ class Dataset(object):
     def run_dataset(self):
 
         self.load_cube()
-        self.preprocess()
         self.flatfield()
+        self.preprocess()
         self.detect_particles()
 
     # ---------------- I/O & preprocessing ----------------
@@ -38,6 +40,7 @@ class Dataset(object):
         path = os.path.join(self.args['DATA_DIR'], sample_name)
 
         self.cube, self.wvl = du.tdms_to_cube(path)
+        self.cube_raw = self.cube.copy()
 
     def flatfield(self):
 
@@ -45,6 +48,7 @@ class Dataset(object):
         d = os.path.join(self.args['DATA_DIR'], self.args['DARK_FILE'])
 
         self.cube = du.flatfield_correct(self.cube, self.wvl, w, d)
+        self.cube_corr = self.cube.copy()
 
     def preprocess(self):
 
