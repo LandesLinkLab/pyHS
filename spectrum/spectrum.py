@@ -1,13 +1,13 @@
 import os
 import sys
 import timeit
-import pickle
+import pickle  as pkl
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional, Any, Union
 
-import spectrum_util as su
+from . import spectrum_util as su
 
 class SpectrumAnalyzer:
 
@@ -24,40 +24,45 @@ class SpectrumAnalyzer:
 
         self.select_representatives()
         self.fit_and_plot()
-        self.dump_pickle()
+        self.dump_pkl()
 
     def select_representatives(self):
 
         self.reps = su.pick_representatives(self.dataset.cube, self.dataset.labels, self.dataset.wvl, self.args)
 
     def fit_and_plot(self):
-
         out_dir = Path(self.args['OUTPUT_DIR'])
         out_dir.mkdir(parents=True, exist_ok=True)
 
         for i, r in enumerate(self.reps):
-
-            r_, c_ = r["row"], r["col"]
-            y_raw = self.dataset.cube[r_, c_]
+            row, col = r["row"], r["col"]
+            y_raw = self.dataset.cube[row, col]
+            # 1) 로렌츠 피팅
             y_fit, params, r2 = su.fit_lorentz(y_raw, self.dataset.wvl, self.args)
 
-            su.plot_spectrum(self.dataset.wvl, 
-                            y_raw, 
-                            y_fit,
-                            f"{self.dataset.sample_name} #{i}  R²={r2:.3f}",
-                            out_dir / f"{self.dataset.sample_name}_{i:03}.png",
-                            dpi=self.args['FIG_DPI'])
+            # 2) residual로부터 noise 계산 → S/N
+            resid = y_raw - y_fit
+            noise = np.std(resid)
+            snr = params.get("a", 0) / noise if noise > 0 else 0
 
-            self.results.append(dict(index=i,
-                                    coord=(int(r_), int(c_)),
-                                    wl_peak=r["wl_peak"],
-                                    intensity=r["intensity"],
-                                    params=params,
-                                    rsq=r2))
+            # 3) 스펙트럼 플롯 (제목에는 R² 대신 index만, 나머지는 우측 상단 텍스트)
+            su.plot_spectrum(self.dataset.wvl,
+                        y_raw,
+                        y_fit,
+                        f"{self.dataset.sample_name} #{i}",
+                        out_dir / f"{self.dataset.sample_name}_{i:03}.png",
+                        dpi=self.args["FIG_DPI"],
+                        params=params,
+                        snr=snr)
 
-        su.save_markers(self.dataset.rgb, 
+            # 결과 저장
+            self.results.append(dict(index=i, coord=(int(row), int(col)), wl_peak=r["wl_peak"], intensity=r["intensity"], params=params, rsq=r2, snr=snr))
+
+        # 4) max-intensity projection 위에 마커 저장
+        su.save_markers(self.dataset.cube,
                         self.reps,
-                        out_dir / f"{self.dataset.sample_name}_markers.png")
+                        out_dir / f"{self.dataset.sample_name}_markers.png",
+                        dpi=self.args["FIG_DPI"])
 
     def dump_pkl(self):
 
@@ -66,8 +71,8 @@ class SpectrumAnalyzer:
         payload = dict(sample=self.dataset.sample_name,
                        wavelengths=self.dataset.wvl,
                        reps=self.results,
-                       config=dict(vars(self.args)))
+                       config=self.args)
         
         with open(out, "wb") as f:
         
-            pkl.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            pkl.dump(payload, f, protocol=pkl.HIGHEST_PROTOCOL)

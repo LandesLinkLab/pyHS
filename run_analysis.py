@@ -1,29 +1,25 @@
 import os
 import sys
-import pickle
 import codecs
 import argparse
+import pickle as pkl
 from typing import List, Dict, Tuple, Set, Union, Optional, Any, Callable, TextIO
 
 # from config import config as config
 from data.dataset import Dataset
-from data.spectrum import SpectrumAnalyzer
+from spectrum.spectrum import SpectrumAnalyzer
 
 
 def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
 
-    os.path
-
-    dataset = Dataset(args,
-                    sample_name=opt['sample'],
-                    image_shape=tuple(opt['image_shape']) if opt['image_shape'] else None)
-    
+    dataset = Dataset(args)
     dataset.run_dataset()
 
-    spectrum_analysis = SpectrumAnalyzer(dataset, config)
+    spectrum_analysis = SpectrumAnalyzer(args, dataset)
+    spectrum_analysis.run_spectrum()
 
 
-    print(f"[info] Completed  ▶  outputs saved in {config.OUTPUT_DIR}")
+    print(f"[info] Completed  ▶  outputs saved in {args['OUTPUT_DIR']}")
 
 
 if __name__ == "__main__":
@@ -33,11 +29,6 @@ if __name__ == "__main__":
                         type = str,
                         required = True,
                         help = "Path to the configuration file")
-    parser.add_argument("--image_shape", 
-                        nargs=2, 
-                        type=int,
-                        metavar=("ROWS", "COLS"),
-                        help="override automatic image-size detection")
     
     opt = vars(parser.parse_args())
     

@@ -1,22 +1,21 @@
 import os
 import timeit
-import pickle
+import pickle as pkl
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional, Any, Union
 
-import dataset_util as du
+from . import dataset_util as du
 
 class Dataset(object):
     """Load hyperspectral TDMS data and preprocess."""
 
     def __init__(self, 
-                args: Dict[str, Any],
-                image_shape=None):
+                args: Dict[str, Any]):
         
         self.args = args
-        self.image_shape = image_shape
+        self.sample_name = args['SAMPLE_NAME']
 
         self.cube = None   # ndarray (H,W,λ)
         self.wvl = None    # ndarray (λ,)
@@ -27,8 +26,8 @@ class Dataset(object):
     def run_dataset(self):
 
         self.load_cube()
-        self.flatfield()
         self.preprocess()
+        self.flatfield()
         self.detect_particles()
 
     # ---------------- I/O & preprocessing ----------------
@@ -38,14 +37,14 @@ class Dataset(object):
         
         path = os.path.join(self.args['DATA_DIR'], sample_name)
 
-        self.cube, self.wvl = du.tdms_to_cube(path, self.image_shape)
+        self.cube, self.wvl = du.tdms_to_cube(path)
 
     def flatfield(self):
 
-        w = Path(self.args['DATA_DIR']) / self.args['WHITE_FILE']
-        d = Path(self.args['DATA_DIR']) / self.args['DARK_FILE']
+        w = os.path.join(self.args['DATA_DIR'], self.args['WHITE_FILE'])
+        d = os.path.join(self.args['DATA_DIR'], self.args['DARK_FILE'])
 
-        self.cube = du.flatfield_correct(self.cube, w, d)
+        self.cube = du.flatfield_correct(self.cube, self.wvl, w, d)
 
     def preprocess(self):
 
