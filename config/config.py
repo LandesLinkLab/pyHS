@@ -22,11 +22,16 @@ args['CROP_RANGE_NM'] = (500, 850)
 args['BACKGROUND_PERC'] = 0.01
 args['SKIP_FLATFIELD'] = False  # Flatfield 사용
 
+args['DC_MODE'] = "global" # local
+args['DC_LOCAL_SEARCH_RADIUS'] = 20 # searching radius
+args['DC_LOCAL_PERCENTILE'] = 1 
+
 # Particle detection
 args['MIN_PIXELS_CLUS'] = 3  # 최소 클러스터 크기 (더 작게)
 args['PEAK_TOL_NM'] = 20.0  # FWHM tolerance
 
 # Analysis settings
+args['FIT_RANGE_NM'] = (500, 800)
 args['REP_CRITERION'] = "max_int"  # 대표 픽셀 선택 기준
 args['INTEGRATION_SIZE'] = 3  # 스펙트럼 추출 시 통합 크기
 args['BACKGROUND_OFFSET'] = 7  # 배경 추출 오프셋
@@ -35,9 +40,13 @@ args['BACKGROUND_OFFSET'] = 7  # 배경 추출 오프셋
 args['FIG_DPI'] = 300
 args['RSQ_MIN'] = 0.90
 
-# Manual mode (비활성화)
+# Manual mode
 args['USE_MANUAL_COORDS'] = False
-args['MANUAL_COORDS'] = []
+args['MANUAL_COORDS'] = [
+(10, 50), 
+(20, 100),
+(35, 150)
+]  # example
 
 # Debug mode
 args['DEBUG'] = True

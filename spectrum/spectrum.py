@@ -51,9 +51,10 @@ class SpectrumAnalyzer:
                 y_fit,
                 f"Particle {i}",
                 out_dir / f"{self.dataset.sample_name}_particle_{i:03d}.png",
-                dpi=self.args["FIG_DPI"],
-                params=params,
-                snr=snr
+                dpi = self.args["FIG_DPI"],
+                params = params,
+                snr = snr,
+                args = self.args
             )
             
             # 결과 저장

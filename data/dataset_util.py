@@ -101,14 +101,126 @@ def tdms_to_cube(path: Path,
     return cube.astype(np.float32), wl.astype(np.float32)
 
 # ------------------- Remaining helpers ----------------------------
+def flatfield_correct_local(cube: np.ndarray, 
+                            wvl: np.ndarray, 
+                            white_path: Path, 
+                            clusters: List[Dict], 
+                            representatives: List[Dict]) -> np.ndarray:
+    """
+    Local dark correction을 사용한 flatfield correction
+    각 클러스터 주변에서 가장 어두운 영역을 dark reference로 사용
+    """
+    # White reference는 global로 로드
+    w_cube, w_wvl = tdms_to_cube(white_path)
+
+    H_w, W_w, L_w = w.cube.shape
+    L_sample = len(wvl)
+
+    if L_w == 2 * L_sample:
+
+        print(f"[debug] Using MATLAB-style 2-point averaging (1340 -> 670)")
+        w_cube_avg = w_cube.reshape(H_w, W_w, L_sample, 2).mean(axis=3)
+        w_wvl_avg = w_wvl.reshape(L_sample, 2).mean(axis=1)
+
+        wvl_diff = np.abs(w_wvl_avg - wvl).mean()
+        print(f"[debug] Average wavelength difference after 2-point avg: {wvl_diff:.3f} nm")
+
+        w_crop = w_cube_avg
+
+    else:
+        print(f"[warning] White reference not exactly 2x sample size. Using nearest neighbor matching.")
+        idxs = []
+        for wl_val in wvl:
+            idx = np.argmin(np.abs(w_wvl - wl_val))
+            idxs.append(idx)
+        idxs = np.array(idxs)
+        w_crop = w_cube[:, :, idxs]
+
+    w_ref = w_crop.mean(axis=(0, 1))  # Global white reference
+    
+    print(f"[debug] Using local dark correction")
+    print(f"[debug] White reference range: [{w_ref.min():.1f}, {w_ref.max():.1f}]")
+    
+    # 결과 저장용
+    corrected = np.zeros_like(cube)
+    H, W, L = cube.shape
+    
+    # 각 대표 픽셀에 대해 local dark 적용
+    for i, rep in enumerate(representatives):
+        row, col = rep['row'], rep['col']
+        cluster = next(c for c in clusters if c['label'] == rep['label'])
+        
+        # Local dark region 찾기
+        search_radius = args.get('DC_LOCAL_SEARCH_RADIUS', 20)
+        percentile = args.get('DC_LOCAL_PERCENTILE', 5)
+        
+        # 검색 영역 정의 (클러스터 주변)
+        row_min = max(0, row - search_radius)
+        row_max = min(H, row + search_radius)
+        col_min = max(0, col - search_radius)
+        col_max = min(W, col + search_radius)
+        
+        # 검색 영역에서 intensity sum이 낮은 픽셀들 찾기
+        search_region = cube[row_min:row_max, col_min:col_max, :]
+        intensity_map = search_region.sum(axis=2)
+        
+        # 클러스터 픽셀은 제외
+        mask = np.ones(intensity_map.shape, dtype=bool)
+        for coord in cluster['coords']:
+            local_r = coord[0] - row_min
+            local_c = coord[1] - col_min
+            if 0 <= local_r < mask.shape[0] and 0 <= local_c < mask.shape[1]:
+                mask[local_r, local_c] = False
+        
+        # 가장 어두운 픽셀들 선택
+        masked_intensity = intensity_map[mask]
+        if len(masked_intensity) > 0:
+            threshold = np.percentile(masked_intensity, percentile)
+            dark_pixels = np.where((intensity_map <= threshold) & mask)
+            
+            if len(dark_pixels[0]) > 0:
+                # Local dark spectrum 계산
+                dark_spectra = search_region[dark_pixels[0], dark_pixels[1], :]
+                local_dark = dark_spectra.mean(axis=0)
+                
+                print(f"  Cluster {i}: Using {len(dark_pixels[0])} pixels for local dark")
+                print(f"    Dark range: [{local_dark.min():.1f}, {local_dark.max():.1f}]")
+            else:
+                # Fallback: 전체 이미지에서 가장 어두운 영역
+                print(f"  Cluster {i}: No suitable dark pixels nearby, using global minimum")
+                intensity_full = cube.sum(axis=2)
+                threshold = np.percentile(intensity_full, 1)
+                dark_pixels = np.where(intensity_full <= threshold)
+                local_dark = cube[dark_pixels[0][:10], dark_pixels[1][:10], :].mean(axis=(0, 1))
+        else:
+            local_dark = np.zeros(L)
+        
+        # 클러스터의 모든 픽셀에 local dark correction 적용
+        for coord in cluster['coords']:
+            r, c = coord
+            numerator = cube[r, c, :] - local_dark
+            denominator = w_ref - local_dark
+            denominator = np.where(denominator > 0, denominator, 1.0)
+            corrected[r, c, :] = numerator / denominator
+    
+    # 나머지 픽셀들은 global dark 사용 (선택사항)
+    # 또는 보정하지 않은 채로 둘 수 있음
+    
+    # Clip extreme values
+    corrected = np.clip(corrected, 0, 10)
+    
+    print(f"[debug] After local dark correction: range [{corrected.min():.3f}, {corrected.max():.3f}]")
+    
+    return corrected
+
+
 def flatfield_correct(cube: np.ndarray,
                       wvl: np.ndarray,
                       white_path: Path,
                       dark_path: Path) -> np.ndarray:
     """
-    Flatfield correction with proper wavelength matching
-    cube: (H, W, L) - already cropped data
-    wvl: (L,) - wavelengths after cropping
+    Flatfield correction - MATLAB과 동일한 방식
+    White/Dark의 1340 포인트를 2개씩 평균내어 670 포인트로 변환
     """
     # Load white and dark references
     w_cube, w_wvl = tdms_to_cube(white_path)
@@ -117,20 +229,38 @@ def flatfield_correct(cube: np.ndarray,
     print(f"[debug] Sample wavelengths: {wvl.min():.1f}-{wvl.max():.1f} nm ({len(wvl)} points)")
     print(f"[debug] White wavelengths: {w_wvl.min():.1f}-{w_wvl.max():.1f} nm ({len(w_wvl)} points)")
     
-    # Find matching wavelength indices
-    # White/Dark가 더 많은 포인트를 가지므로 (1340 vs 670)
-    # 각 샘플 파장에 대해 가장 가까운 white/dark 파장 찾기
-    idxs = []
-    for wl_val in wvl:
-        idx = np.argmin(np.abs(w_wvl - wl_val))
-        idxs.append(idx)
-    idxs = np.array(idxs)
+    H_w, W_w, L_w = w_cube.shape
+    L_sample = len(wvl)
     
-    print(f"[debug] Wavelength matching: using indices {idxs[0]}-{idxs[-1]} from white/dark")
-    
-    # Extract matching wavelengths
-    w_crop = w_cube[:, :, idxs]
-    d_crop = d_cube[:, :, idxs]
+    # MATLAB 방식: 2개씩 평균 (1340 -> 670)
+    if L_w == 2 * L_sample:
+        print(f"[debug] Using MATLAB-style 2-point averaging (1340 -> 670)")
+        
+        # Reshape and average every 2 points
+        w_cube_avg = w_cube.reshape(H_w, W_w, L_sample, 2).mean(axis=3)
+        d_cube_avg = d_cube.reshape(H_w, W_w, L_sample, 2).mean(axis=3)
+        
+        # 파장도 2개씩 평균
+        w_wvl_avg = w_wvl.reshape(L_sample, 2).mean(axis=1)
+        
+        # 평균된 파장이 샘플 파장과 일치하는지 확인
+        wvl_diff = np.abs(w_wvl_avg - wvl).mean()
+        print(f"[debug] Average wavelength difference after 2-point avg: {wvl_diff:.3f} nm")
+        
+        w_crop = w_cube_avg
+        d_crop = d_cube_avg
+        
+    else:
+        # Fallback: nearest neighbor (기존 방식)
+        print(f"[warning] White/Dark not exactly 2x sample size. Using nearest neighbor matching.")
+        idxs = []
+        for wl_val in wvl:
+            idx = np.argmin(np.abs(w_wvl - wl_val))
+            idxs.append(idx)
+        idxs = np.array(idxs)
+        
+        w_crop = w_cube[:, :, idxs]
+        d_crop = d_cube[:, :, idxs]
     
     # Spatial average to get reference spectra
     w_ref = w_crop.mean(axis=(0, 1))  # (L,)
@@ -139,7 +269,7 @@ def flatfield_correct(cube: np.ndarray,
     print(f"[debug] White reference range: [{w_ref.min():.1f}, {w_ref.max():.1f}]")
     print(f"[debug] Dark reference range: [{d_ref.min():.1f}, {d_ref.max():.1f}]")
     
-    # Apply correction
+    # Apply correction - MATLAB formula
     numerator = cube - d_ref[None, None, :]
     denominator = (w_ref - d_ref)[None, None, :]
     
@@ -367,3 +497,45 @@ def select_representative_spectra(cube, wavelengths, clusters, args):
     print(f"\n[Summary] {len(representatives)} valid particles from {len(clusters)} clusters")
     return representatives
 
+def select_manual_representatives(self):
+    """Manual 좌표에서 대표 스펙트럼 선택"""
+    representatives = []
+    
+    print(f"\n[info] Processing {len(self.args['MANUAL_COORDS'])} manual coordinates...")
+    
+    for i, (row, col) in enumerate(self.args['MANUAL_COORDS']):
+        # 좌표 유효성 검사
+        if row < 0 or row >= self.cube.shape[0] or col < 0 or col >= self.cube.shape[1]:
+            print(f"[warning] Invalid coordinate ({row}, {col}) - skipping")
+            continue
+        
+        # 스펙트럼 추출
+        spectrum = self.cube[row, col, :]
+        
+        # Peak 정보
+        peak_idx = np.argmax(spectrum)
+        peak_wl = self.wvl[peak_idx]
+        peak_intensity = spectrum[peak_idx]
+        
+        # FWHM 추정
+        half_max = peak_intensity / 2
+        above_half = np.where(spectrum > half_max)[0]
+        if len(above_half) > 1:
+            fwhm = self.wvl[above_half[-1]] - self.wvl[above_half[0]]
+        else:
+            fwhm = 0
+        
+        representatives.append({
+            'label': i + 1,
+            'row': row,
+            'col': col,
+            'spectrum': spectrum,
+            'peak_wl': peak_wl,
+            'peak_intensity': peak_intensity,
+            'fwhm': fwhm,
+            'cluster_size': 1  # Manual은 1픽셀
+        })
+        
+        print(f"  Manual point {i}: ({row},{col}) - λ_peak={peak_wl:.1f}nm, intensity={peak_intensity:.1f}")
+    
+    return representatives

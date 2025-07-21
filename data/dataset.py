@@ -23,11 +23,34 @@ class Dataset(object):
     def run_dataset(self):
         self.load_cube()
         self.preprocess()
-        if not self.args.get('SKIP_FLATFIELD', False):
-            self.flatfield()
-        self.create_dfs_map()
-        self.detect_particles_dfs()
-        self.select_representatives()
+
+        dc_mode = self.args.get('DC_MODE', 'global')
+
+            if dc_mode == 'global':
+
+                if not self.args.get('SKIP_FLATFIELD', False):
+                    self.flatfield()
+                self.create_dfs_map()
+                self.detect_particles_dfs()
+                self.select_representatives()
+
+            elif: dc_mode == 'local':
+
+                self.create_dfs_map()
+                self.detect_particles_dfs()
+                self.select_representatives()
+
+                if not self.args.get('SKIP_FLATFIELD', False):
+
+                    print("\n[Step] Applying local dark correction...")
+                    w = os.path.join(self.args['DATA_DIR'], self.args['WHITE_FILE'])
+
+                    self.cube = du.flatfield_correct_local(self.cube, self.wvl, w, self.clusters, self.representatives)
+
+                    wl_range = self.args.get('DFS_WL_RANGE', (500, 800))
+                    self.max_map = du.create_dfs_max_intensity_map(self.cube, self.wvl, wl_range)
+                    self._save_debug_image(self.max_map, "dfs_max_map_corrected", cmap='hot')
+
     
     # ---- 기본 I/O 메서드들 (누락된 부분) ----
     def load_cube(self):
@@ -45,18 +68,33 @@ class Dataset(object):
         
         # Save a debug image of raw data
         self._save_debug_image(self.cube.sum(axis=2), "raw_sum")
-        
+
+
     def flatfield(self):
         print(f"\n[debug] Applying flatfield correction...")
         
         w = os.path.join(self.args['DATA_DIR'], self.args['WHITE_FILE'])
-        d = os.path.join(self.args['DATA_DIR'], self.args['DARK_FILE'])
-        
-        print(f"  - White reference: {w}")
-        print(f"  - Dark reference: {d}")
         
         cube_before = self.cube.copy()
-        self.cube = du.flatfield_correct(self.cube, self.wvl, w, d)
+        
+        dc_mode = self.args.get('DC_MODE', 'global')
+        
+        if dc_mode == 'global':
+            d = os.path.join(self.args['DATA_DIR'], self.args['DARK_FILE'])
+            print(f"  - White reference: {w}")
+            print(f"  - Dark reference: {d} (global mode)")
+            self.cube = du.flatfield_correct(self.cube, self.wvl, w, d)
+            
+        elif dc_mode == 'local':
+            print(f"  - White reference: {w}")
+            print(f"  - Dark mode: local (searching near each cluster)")
+            
+            self.need_local_dark = True
+
+            return
+        
+        else:
+            raise ValueError(f"Unknown DC_MODE: {dc_mode}")
         
         print(f"[debug] After flatfield:")
         print(f"  - Data range: [{self.cube.min():.2f}, {self.cube.max():.2f}]")
@@ -104,13 +142,16 @@ class Dataset(object):
         
         # Debug 이미지 저장
         self._save_debug_dfs_detection()
-    
+
     def select_representatives(self):
-        """Select representative spectrum for each particle"""
+
         print("\n[Step] Selecting representative spectra...")
-        
-        self.representatives = du.select_representative_spectra(
-            self.cube, self.wvl, self.clusters, self.args)
+
+        if self.args.get('USE_MANUAL_COORDS', False) and self.args.get('MANUAL_COORDS'):
+            self.representatives = du.select_manual_representatives()
+        else:
+            self.representatives = du.select_representative_spectra(
+                self.cube, self.wvl, self.clusters, self.args)
         
         # 호환성을 위해 centroids 형식으로도 저장
         if self.representatives:
