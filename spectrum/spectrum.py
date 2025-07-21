@@ -1,9 +1,9 @@
 import os
 import sys
-import timeit
-import pickle as pkl
 import numpy as np
+import pickle as pkl
 from pathlib import Path
+from datetime import datetime
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional, Any, Union
 
@@ -135,7 +135,7 @@ class SpectrumAnalyzer:
             'max_map': self.dataset.max_map,
             'clusters': self.dataset.clusters,
             'representatives': self.dataset.representatives,
-            'analysis_date': str(pd.Timestamp.now()) if 'pd' in globals() else None
+            'analysis_date': str(datetime.now().strftime("%m-%d-%Y %H:%M:%S"))
         }
         
         with open(out, "wb") as f:

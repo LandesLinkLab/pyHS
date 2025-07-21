@@ -1,36 +1,14 @@
 import numpy as np
 from pathlib import Path
-import matplotlib.pyplot as plt
 from nptdms import TdmsFile
-from skimage.filters import threshold_otsu
-from skimage.morphology import remove_small_objects, binary_closing, footprint_rectangle, binary_closing, remove_small_objects
+import matplotlib.pyplot as plt
+
 from scipy import ndimage as ndi
+from scipy.ndimage import maximum_filter
+from skimage.filters import threshold_otsu
+from skimage.morphology import remove_small_objects, binary_closing, footprint_rectangle
+
 from typing import List, Dict, Tuple, Optional, Any, Union
-
-# ------------- Helper to identify wavelength axis -----------------
-def _is_lambda_channel(ch):
-    # 1) float 배열이고 단조증가(monotonic)하면 λ-axis
-    try:
-        arr = ch[:]  # numpy array
-        if isinstance(arr, np.ndarray) and arr.dtype.kind == 'f' \
-           and arr.ndim == 1 and arr.size > 1 \
-           and np.all(np.diff(arr) > 0):
-            return True
-    except:
-        pass
-
-    # 2) (기존 로직) 이름/단위 기반 식별
-    name = ch.name.lower()
-    if any(key in name for key in ("wave", "lambda", "wl", "wavelength", "nm")):
-        return True
-    unit = str(ch.properties.get("unit_string")
-               or ch.properties.get("Unit") or "").lower()
-    return "nm" in unit
-
-# -------------------- TDMS -> cube --------------------------------
-# dataset_util.py의 tdms_to_cube 함수를 이것으로 교체
-
-# dataset_util.py의 tdms_to_cube 함수를 이것으로 교체
 
 def tdms_to_cube(path: Path,
                  image_shape: Optional[Tuple[int, int]] = None):
@@ -190,67 +168,6 @@ def crop_and_bg(cube, wavelengths, args):
 
     return cube.astype(np.float32), wavelengths
 
-def cube_to_rgb(cube, wavelengths):
-
-    def idx(wl): return int(np.abs(wavelengths - wl).argmin())
-
-    r,g,b = cube[..., idx(650)], cube[..., idx(550)], cube[..., idx(450)]
-
-    return np.clip(np.stack([r,g,b], axis=-1) / np.percentile(cube, 99), 0,1)
-
-# dataset_util.py의 label_particles 함수를 이것으로 교체
-
-def label_particles(rgb, args):
-    """
-    Detect particles with improved thresholding
-    """
-    # RGB를 grayscale로 변환
-    gray = rgb.mean(axis=2)
-    
-    # 디버그 정보
-    print(f"[debug] Gray image stats: min={gray.min():.3f}, max={gray.max():.3f}, mean={gray.mean():.3f}")
-    
-    # Otsu threshold 계산
-    try:
-        thr = threshold_otsu(gray)
-        print(f"[debug] Otsu threshold: {thr:.3f}")
-    except:
-        # Otsu가 실패하면 평균값 사용
-        thr = gray.mean()
-        print(f"[debug] Otsu failed, using mean: {thr:.3f}")
-    
-    # Threshold 적용
-    threshold_value = thr * args["THRESH_HIGH"]
-    print(f"[debug] Final threshold: {threshold_value:.3f} (Otsu * {args['THRESH_HIGH']})")
-    
-    # Binary mask 생성
-    mask = gray > threshold_value
-    
-    # Morphological operations
-    mask = binary_closing(mask, footprint_rectangle((3, 3)))
-    mask = remove_small_objects(mask, args["MIN_PIXELS_CLUS"])
-    
-    # Label connected components
-    labels, num = ndi.label(mask)
-    
-    print(f"[debug] Found {num} regions after filtering")
-    
-    # Calculate centroids
-    if num > 0:
-        cents = np.array(ndi.center_of_mass(mask, labels, range(1, num+1)))
-        if cents.ndim == 1:
-            cents = cents.reshape(1, -1)
-    else:
-        cents = np.array([])
-    
-    # 각 레이블의 크기 출력
-    for i in range(1, num+1):
-        size = np.sum(labels == i)
-        print(f"  - Region {i}: {size} pixels")
-    
-    return labels, cents
-
-
 def create_dfs_max_intensity_map(cube, wavelengths, wl_range=(500, 800)):
     """
     Create max intensity projection map for DFS data
@@ -290,7 +207,7 @@ def detect_dfs_particles(max_map, args):
         threshold = args.get('DFS_INTENSITY_THRESHOLD', 0.1)
         
         # Try Otsu if manual threshold fails
-        from skimage.filters import threshold_otsu
+        
         try:
             otsu_val = threshold_otsu(normalized)
             print(f"[debug] Otsu threshold on normalized data: {otsu_val:.3f}")
@@ -313,7 +230,7 @@ def detect_dfs_particles(max_map, args):
         print(f"[debug] Using percentile {percentile_threshold}: {mask.sum()} pixels above threshold")
     
     # Morphological operations
-    from skimage.morphology import binary_closing, remove_small_objects, footprint_rectangle
+    
     mask = binary_closing(mask, footprint_rectangle((3, 3)))
     
     # For initial detection, use smaller minimum size
@@ -321,7 +238,7 @@ def detect_dfs_particles(max_map, args):
     mask = remove_small_objects(mask, min_size)
     
     # Label connected components
-    from scipy import ndimage as ndi
+    
     labels, num = ndi.label(mask)
     
     print(f"[info] Found {num} particle clusters (min size: {min_size} pixels)")
@@ -350,7 +267,7 @@ def detect_dfs_particles(max_map, args):
     # If no clusters found, try to find peaks
     if len(clusters) == 0:
         print("[warning] No clusters found, trying peak detection")
-        from scipy.ndimage import maximum_filter
+        
         
         # Find local maxima
         local_max = maximum_filter(max_map, size=5)

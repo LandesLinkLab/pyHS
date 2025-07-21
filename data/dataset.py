@@ -1,11 +1,10 @@
 import os
-import timeit
-import pickle as pkl
 import numpy as np
+import pickle as pkl
 from pathlib import Path
-from matplotlib import cm
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional, Any, Union
+
 from . import dataset_util as du
 
 class Dataset(object):
