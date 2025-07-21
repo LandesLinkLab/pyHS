@@ -38,6 +38,8 @@ def extract_spectrum_with_background(cube, row, col, args):
     
     return corrected_spec
 
+# spectrum_util.py의 pick_representatives 함수를 이것으로 교체
+
 def pick_representatives(cube, labels, wavelengths, args):
     """Handle both automatic and manual particle selection"""
     
@@ -45,23 +47,72 @@ def pick_representatives(cube, labels, wavelengths, args):
     if args.get('USE_MANUAL_COORDS', False) and args.get('MANUAL_COORDS'):
         return pick_manual_representatives(cube, wavelengths, args)
     
-    # Original automatic selection
+    # Original automatic selection - 수정된 버전
     reps = []
-    for lab in np.unique(labels):
-        if lab == 0: continue
+    unique_labels = np.unique(labels)
+    print(f"\n[debug] Processing {len(unique_labels)-1} detected regions (excluding background)")
+    
+    for lab in unique_labels:
+        if lab == 0: 
+            continue  # Skip background
+            
         coords = np.argwhere(labels == lab)
-        if coords.shape[0] < args["MIN_PIXELS_CLUS"]: continue
+        print(f"\n[debug] Label {lab}: {coords.shape[0]} pixels")
         
-        peak_pos = np.array([get_peak(cube[r, c], wavelengths)[0] for r, c in coords])
-        if peak_pos.std() > args["PEAK_TOL_NM"]: continue
+        if coords.shape[0] < args["MIN_PIXELS_CLUS"]: 
+            print(f"  - Skipped: too few pixels ({coords.shape[0]} < {args['MIN_PIXELS_CLUS']})")
+            continue
         
-        ints = np.array([get_peak(cube[r, c], wavelengths)[1] for r, c in coords])
-        sel = ints.argmax() if args["REP_CRITERION"] == "max_int" else 0
+        # 각 픽셀에서 스펙트럼 추출하여 peak 위치 확인
+        spectra = []
+        peak_positions = []
+        peak_intensities = []
+        
+        for r, c in coords:
+            spec = cube[r, c]
+            if spec.max() > 0:  # 유효한 스펙트럼인 경우만
+                wl_peak, intensity = get_peak(spec, wavelengths)
+                spectra.append(spec)
+                peak_positions.append(wl_peak)
+                peak_intensities.append(intensity)
+        
+        if len(peak_positions) == 0:
+            print(f"  - Skipped: no valid spectra")
+            continue
+            
+        peak_pos_array = np.array(peak_positions)
+        peak_std = peak_pos_array.std()
+        peak_mean = peak_pos_array.mean()
+        
+        print(f"  - Peak wavelength: {peak_mean:.1f} ± {peak_std:.1f} nm")
+        print(f"  - Peak intensity range: [{min(peak_intensities):.1f}, {max(peak_intensities):.1f}]")
+        
+        # Peak 위치의 표준편차가 tolerance 이내인지 확인
+        if peak_std > args["PEAK_TOL_NM"]: 
+            print(f"  - Skipped: peak variation too large ({peak_std:.1f} > {args['PEAK_TOL_NM']})")
+            continue
+        
+        # 대표 픽셀 선택 (가장 강한 intensity를 가진 픽셀)
+        ints = np.array(peak_intensities)
+        if args["REP_CRITERION"] == "max_int":
+            sel = ints.argmax()
+        else:
+            sel = len(coords) // 2  # 중앙 픽셀
+            
         r_sel, c_sel = map(int, coords[sel])
         
-        reps.append(dict(row=r_sel, col=c_sel, 
-                        wl_peak=float(peak_pos[sel]), 
-                        intensity=float(ints[sel])))
+        print(f"  - Selected pixel ({r_sel}, {c_sel}) with intensity {ints[sel]:.1f}")
+        
+        reps.append(dict(
+            row=r_sel, 
+            col=c_sel, 
+            wl_peak=float(peak_positions[sel]), 
+            intensity=float(ints[sel]),
+            label=int(lab),
+            n_pixels=len(coords)
+        ))
+    
+    print(f"\n[info] Selected {len(reps)} representative particles from {len(unique_labels)-1} regions")
     return reps
 
 def pick_manual_representatives(cube, wavelengths, args):
@@ -203,63 +254,103 @@ def plot_spectrum(x, y, y_fit, title, out_png, dpi=300, params=None, snr=None):
     fig.savefig(out_png, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 
+# spectrum_util.py의 save_markers 함수를 이것으로 교체
+
 def save_markers(cube, reps, out_png, dpi=300):
     """
-    Save particle map exactly like MATLAB version
+    Save particle map with enhanced visualization
+    Shows particles on a background where they are clearly visible
     """
-    # MATLAB과 동일: 전체 파장 범위 합산
-    specfin_final = cube.sum(axis=2)
+    # 여러 배경 이미지 옵션 준비
+    sum_img = cube.sum(axis=2)
+    max_img = cube.max(axis=2)
     
-    # 에러 방지: 모든 값이 0인 경우 처리
-    if np.all(specfin_final == 0):
-        print("[warning] All values in image are zero")
-        specfin_final = np.ones_like(specfin_final) * 0.1
-        high = 1.0
-    else:
-        high = np.max(specfin_final)
+    # 특정 파장에서의 이미지 (중간 파장)
+    mid_idx = cube.shape[2] // 2
+    mid_wl_img = cube[:, :, mid_idx]
     
-    low = 0
+    # 가장 contrast가 좋은 이미지 선택
+    # (표준편차가 큰 이미지가 일반적으로 feature가 잘 보임)
+    images = {'sum': sum_img, 'max': max_img, 'mid_wl': mid_wl_img}
+    best_img = max(images.items(), key=lambda x: x[1].std())[1]
     
-    # Dynamic range가 너무 작은 경우 처리
-    if high - low < 1e-10:
-        high = low + 1.0
+    # Dynamic range 설정
+    vmin, vmax = np.percentile(best_img[best_img > 0], [2, 98]) if np.any(best_img > 0) else (0, 1)
     
-    # Figure 생성
-    fig, ax = plt.subplots(figsize=(8, 8))
+    # Figure 생성 - MATLAB 스타일과 향상된 버전 둘 다
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
     
-    # MATLAB imshow와 동일한 표시
-    im = ax.imshow(specfin_final,
-                   cmap='gray',
-                   origin='upper',  # MATLAB default
-                   vmin=low,
-                   vmax=high,
-                   interpolation='nearest',
-                   aspect='equal')
+    # ---- 1. MATLAB 스타일 (왼쪽) ----
+    ax1.imshow(sum_img,
+               cmap='gray',
+               origin='upper',
+               vmin=0,
+               vmax=sum_img.max() if sum_img.max() > 0 else 1,
+               interpolation='nearest')
     
-    # 축 제거
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.spines['left'].set_visible(False)
+    ax1.set_title(f'MATLAB Style - {len(reps)} particles', fontsize=14)
+    ax1.axis('off')
     
-    # MATLAB 스타일 텍스트 마커
+    # 녹색 번호 표시
     for i, r in enumerate(reps):
-        ax.text(r['col'], r['row'],
+        ax1.text(r['col'], r['row'],
                 str(i),
                 color='green',
                 fontsize=12,
                 ha='center',
                 va='center',
-                weight='normal')
+                weight='bold')
     
-    # Figure 저장
-    plt.tight_layout(pad=0.1)
-    fig.savefig(out_png, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
+    # ---- 2. 향상된 시각화 (오른쪽) ----
+    im = ax2.imshow(best_img,
+                    cmap='hot',
+                    origin='upper',
+                    vmin=vmin,
+                    vmax=vmax,
+                    interpolation='nearest')
+    
+    ax2.set_title(f'Enhanced View - {len(reps)} particles', fontsize=14)
+    ax2.axis('off')
+    
+    # Colorbar
+    cbar = plt.colorbar(im, ax=ax2, fraction=0.046, pad=0.04)
+    cbar.set_label('Intensity', fontsize=10)
+    
+    # 향상된 마커
+    for i, r in enumerate(reps):
+        # 흰색 원 with 검은 테두리
+        circle1 = plt.Circle((r['col'], r['row']), 
+                           radius=4,
+                           edgecolor='black',
+                           facecolor='none',
+                           linewidth=2)
+        circle2 = plt.Circle((r['col'], r['row']), 
+                           radius=4,
+                           edgecolor='white',
+                           facecolor='none',
+                           linewidth=1)
+        ax2.add_patch(circle1)
+        ax2.add_patch(circle2)
+        
+        # 번호 표시 (배경 박스와 함께)
+        ax2.text(r['col'] + 6, r['row'] - 6,
+                str(i),
+                color='white',
+                fontsize=10,
+                weight='bold',
+                bbox=dict(facecolor='black', alpha=0.7, pad=2, edgecolor='white'))
+    
+    plt.tight_layout()
+    fig.savefig(out_png, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
     
-    print(f"[info] Image saved: shape={specfin_final.shape}, range=[{low}, {high:.2f}]")
+    # 추가 정보 출력
+    print(f"\n[info] Markers saved: {out_png}")
+    for i, r in enumerate(reps):
+        info = f"  Particle {i}: pos=({r['row']}, {r['col']}), λ_peak={r['wl_peak']:.1f}nm"
+        if 'n_pixels' in r:
+            info += f", pixels={r['n_pixels']}"
+        print(info)
 
 def extract_spectrum_with_background(cube, row, col, args):
     """
@@ -317,3 +408,4 @@ def extract_spectrum_with_background(cube, row, col, args):
           f"mean={corrected_spec.mean():.2f}, integrated={corrected_spec.sum():.2f}")
     
     return corrected_spec
+
