@@ -88,7 +88,7 @@ def inspect_tdms_file(file_path):
 # Main execution
 if __name__ == "__main__":
     home = str(Path.home())
-    data_dir = os.path.join(home, 'dataset/pyHS/raw')
+    data_dir = os.path.join(home, 'dataset/pyHS/raw_test')
     
     files = ['AuNR_PMMA.tdms', 'wc.tdms', 'dc.tdms']
     

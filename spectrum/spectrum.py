@@ -9,8 +9,6 @@ from typing import List, Dict, Tuple, Optional, Any, Union
 
 from . import spectrum_util as su
 
-# spectrum.py의 수정된 부분
-
 class SpectrumAnalyzer:
     def __init__(self, args: Dict[str, Any], dataset):
         self.args = args
@@ -79,14 +77,14 @@ class SpectrumAnalyzer:
                   f"R²={r2:.3f}, cluster_size={rep['cluster_size']}")
     
     def save_dfs_particle_map(self):
-        """Save DFS-specific particle map"""
+
         if not self.dataset.representatives:
             return
             
         out_dir = Path(self.args['OUTPUT_DIR'])
         output_path = out_dir / f"{self.dataset.sample_name}_dfs_markers.png"
         
-        du.save_dfs_particle_map(
+        su.save_dfs_particle_map(
             self.dataset.max_map,
             self.dataset.representatives,
             output_path,
@@ -94,7 +92,7 @@ class SpectrumAnalyzer:
         )
     
     def print_summary(self):
-        """Print DFS analysis summary"""
+
         print("\n" + "="*60)
         print("DFS ANALYSIS SUMMARY")
         print("="*60)
@@ -125,22 +123,22 @@ class SpectrumAnalyzer:
         print("="*60)
 
     def dump_pkl(self):
-    """Save analysis results to pickle file"""
-    out = Path(self.args['OUTPUT_DIR']) / f"{self.dataset.sample_name}_results.pkl"
-    
-    payload = {
-        'sample': self.dataset.sample_name,
-        'wavelengths': self.dataset.wvl,
-        'particles': self.results,
-        'config': self.args,
-        'cube_shape': self.dataset.cube.shape,
-        'max_map': self.dataset.max_map,
-        'clusters': self.dataset.clusters,
-        'representatives': self.dataset.representatives,
-        'analysis_date': str(pd.Timestamp.now()) if 'pd' in globals() else None
-    }
-    
-    with open(out, "wb") as f:
-        pkl.dump(payload, f, protocol=pkl.HIGHEST_PROTOCOL)
+
+        out = Path(self.args['OUTPUT_DIR']) / f"{self.dataset.sample_name}_results.pkl"
+
+        payload = {
+            'sample': self.dataset.sample_name,
+            'wavelengths': self.dataset.wvl,
+            'particles': self.results,
+            'config': self.args,
+            'cube_shape': self.dataset.cube.shape,
+            'max_map': self.dataset.max_map,
+            'clusters': self.dataset.clusters,
+            'representatives': self.dataset.representatives,
+            'analysis_date': str(pd.Timestamp.now()) if 'pd' in globals() else None
+        }
         
-    print(f"\n[info] Results saved to: {out}")
+        with open(out, "wb") as f:
+            pkl.dump(payload, f, protocol=pkl.HIGHEST_PROTOCOL)
+            
+        print(f"\n[info] Results saved to: {out}")

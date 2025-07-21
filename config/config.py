@@ -12,17 +12,19 @@ args['DARK_FILE'] = "dc.tdms"
 args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS")
 
 # DFS-specific settings
-args['DFS_WL_RANGE'] = (500, 800)  # 파장 범위 for max intensity map
-args['DFS_INTENSITY_THRESHOLD'] = 0.1  # 상대적 intensity threshold (0-1)
+# 실제 측정 범위가 388-897nm이지만, 관심 영역은 500-1000nm
+args['DFS_WL_RANGE'] = (600, 850)  # DFS max intensity map을 위한 범위
+args['DFS_INTENSITY_THRESHOLD'] = 0.05  # 낮춰서 더 많은 파티클 검출
 
 # Preprocessing
-args['CROP_RANGE_NM'] = (450, 850)  # 전체 분석 범위
+# TDMS 파일의 전체 범위가 388-897nm이므로, 500-850nm로 crop
+args['CROP_RANGE_NM'] = (500, 850)  
 args['BACKGROUND_PERC'] = 0.01
-args['SKIP_FLATFIELD'] = False  # Flatfield 사용 여부
+args['SKIP_FLATFIELD'] = False  # Flatfield 사용
 
 # Particle detection
-args['MIN_PIXELS_CLUS'] = 4  # 최소 클러스터 크기
-args['PEAK_TOL_NM'] = 10.0  # FWHM tolerance
+args['MIN_PIXELS_CLUS'] = 3  # 최소 클러스터 크기 (더 작게)
+args['PEAK_TOL_NM'] = 20.0  # FWHM tolerance
 
 # Analysis settings
 args['REP_CRITERION'] = "max_int"  # 대표 픽셀 선택 기준

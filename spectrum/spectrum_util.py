@@ -38,8 +38,6 @@ def extract_spectrum_with_background(cube, row, col, args):
     
     return corrected_spec
 
-# spectrum_util.py의 pick_representatives 함수를 이것으로 교체
-
 def pick_representatives(cube, labels, wavelengths, args):
     """Handle both automatic and manual particle selection"""
     
@@ -254,7 +252,6 @@ def plot_spectrum(x, y, y_fit, title, out_png, dpi=300, params=None, snr=None):
     fig.savefig(out_png, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 
-# spectrum_util.py의 save_markers 함수를 이것으로 교체
 
 def save_markers(cube, reps, out_png, dpi=300):
     """
@@ -320,12 +317,12 @@ def save_markers(cube, reps, out_png, dpi=300):
     for i, r in enumerate(reps):
         # 흰색 원 with 검은 테두리
         circle1 = plt.Circle((r['col'], r['row']), 
-                           radius=4,
+                           radius=2,
                            edgecolor='black',
                            facecolor='none',
                            linewidth=2)
         circle2 = plt.Circle((r['col'], r['row']), 
-                           radius=4,
+                           radius=2,
                            edgecolor='white',
                            facecolor='none',
                            linewidth=1)
@@ -333,10 +330,10 @@ def save_markers(cube, reps, out_png, dpi=300):
         ax2.add_patch(circle2)
         
         # 번호 표시 (배경 박스와 함께)
-        ax2.text(r['col'] + 6, r['row'] - 6,
+        ax2.text(r['col'] + 3, r['row'] - 3,
                 str(i),
                 color='white',
-                fontsize=10,
+                fontsize=6,
                 weight='bold',
                 bbox=dict(facecolor='black', alpha=0.7, pad=2, edgecolor='white'))
     
@@ -409,3 +406,61 @@ def extract_spectrum_with_background(cube, row, col, args):
     
     return corrected_spec
 
+def save_dfs_particle_map(max_map, representatives, output_path, sample_name):
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    vmin, vmax = np.percentile(max_map[max_map > 0], [5, 95]) if np.any(max_map > 0) else (0, 1)
+    
+    im = ax.imshow(max_map,
+                   cmap='hot',
+                   origin='lower',
+                   vmin=vmin,
+                   vmax=vmax,
+                   interpolation='nearest')
+    
+    # Colorbar
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Max Intensity (500-800 nm)', fontsize=12)
+    
+    # Particle marker setup (circle + number + center wavelength)
+    for i, rep in enumerate(representatives):
+        row, col = rep['row'], rep['col']
+        
+        # White marker
+        circle_inner = plt.Circle((col, row), 
+                                 radius=1,
+                                 edgecolor='white',
+                                 facecolor='none',
+                                 linewidth=1)
+        ax.add_patch(circle_inner)
+        
+        # Particle number
+        ax.text(col - 1.5, row + 2,
+                f'{i}',
+                color='white',
+                fontsize=6,
+                fontweight='bold')
+        
+        # Wavelength
+        ax.text(col - 4, row - 3,
+                f'{rep["peak_wl"]:.0f}nm',
+                color='yellow',
+                fontsize=6,
+                fontweight='bold',
+                ha='left')
+    
+    # Title and axis label
+    ax.set_title(f'{sample_name} - DFS Particle Map ({len(representatives)} particles)', 
+                fontsize=16, pad=10)
+    ax.set_xlabel('X (pixels)', fontsize=12)
+    ax.set_ylabel('Y (pixels)', fontsize=12)
+    
+    # Grid
+    ax.grid(True, alpha=0.3, linestyle='--', color='white')
+    
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    
+    print(f"[info] Saved DFS particle map: {output_path}")

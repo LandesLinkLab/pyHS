@@ -1,10 +1,11 @@
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional, Any, Union
+import matplotlib.pyplot as plt
 from nptdms import TdmsFile
 from skimage.filters import threshold_otsu
 from skimage.morphology import remove_small_objects, binary_closing, footprint_rectangle, binary_closing, remove_small_objects
 from scipy import ndimage as ndi
+from typing import List, Dict, Tuple, Optional, Any, Union
 
 # ------------- Helper to identify wavelength axis -----------------
 def _is_lambda_channel(ch):
@@ -29,137 +30,96 @@ def _is_lambda_channel(ch):
 # -------------------- TDMS -> cube --------------------------------
 # dataset_util.py의 tdms_to_cube 함수를 이것으로 교체
 
+# dataset_util.py의 tdms_to_cube 함수를 이것으로 교체
+
 def tdms_to_cube(path: Path,
                  image_shape: Optional[Tuple[int, int]] = None):
     """
-    MATLAB‑버전과 동일한 로직으로 TDMS → (H,W,L) cube 변환
-    파장 축 문제 수정 버전
+    TDMS → (H,W,L) cube 변환
+    Info 그룹의 wvlths 채널에서 파장 정보 추출
     """
     td = TdmsFile.read(path)
-    ch_all = [ch for g in td.groups() for ch in g.channels()]
-
-    # ── 1) λ‑축 채널 식별 ──────────────────────────────
-    def _is_lambda(ch):
-        v = ch[:]
-        if v.ndim == 1 and v.size > 1:
-            # 단조증가 체크를 제거하고 일단 1D 배열이면 후보로
-            return True
-        name = ch.name.lower()
-        if any(k in name for k in ("wave", "lambda", "wl", "wavelength", "nm")):
-            return True
-        unit = str(ch.properties.get("unit_string")
-                   or ch.properties.get("Unit") or "").lower()
-        return "nm" in unit
-
-    # 파장 채널 후보들 찾기
-    wl_candidates = [c for c in ch_all if _is_lambda(c)]
     
-    if not wl_candidates:
-        raise RuntimeError("λ‑axis channel not found")
+    # ── 1) Info 그룹에서 파장 정보 추출 ──
+    info_group = td['Info']
+    if info_group is None:
+        raise RuntimeError("No 'Info' group found in TDMS file")
     
-    # 파장 후보 중에서 합리적인 범위의 것 선택 (300-1000nm 정도)
-    wl_ch = None
-    for candidate in wl_candidates:
-        vals = candidate[:].astype(np.float32)
-        # 파장 범위가 합리적인지 체크
-        if vals.min() > 100 and vals.max() < 2000 and vals.size > 100:
-            wl_ch = candidate
-            wl = vals
+    # wvlths 채널 찾기
+    wl_channel = None
+    for ch in info_group.channels():
+        if ch.name == 'wvlths':
+            wl_channel = ch
             break
     
-    # 못 찾았으면 첫 번째 후보 사용하고 스케일 조정
-    if wl_ch is None:
-        wl_ch = wl_candidates[0]
-        wl = wl_ch[:].astype(np.float32)
-        
-        # 파장이 비정상적으로 크면 스케일 조정 (아마 인덱스일 가능성)
-        if wl.max() > 2000:
-            print(f"[warning] Wavelength range seems wrong: {wl.min():.1f}-{wl.max():.1f}")
-            print("[warning] Creating synthetic wavelength axis 400-900nm")
-            # 400-900nm 범위로 재생성
-            wl = np.linspace(400, 900, len(wl))
-
-    print(f"[debug] Wavelength axis: {wl.min():.1f}-{wl.max():.1f} nm, {len(wl)} points")
-
-    # ── 2) 스펙트럼 채널 목록 (λ‑축과 길이가 같은 채널) ──
-    specs = [c for c in ch_all if len(c) == len(wl) and c is not wl_ch]
+    if wl_channel is None:
+        raise RuntimeError("No 'wvlths' channel found in Info group")
+    
+    wl = wl_channel[:].astype(np.float32)
+    print(f"[info] Wavelength array from TDMS: {wl.min():.1f}-{wl.max():.1f} nm, {len(wl)} points")
+    
+    # ── 2) Spectra 그룹에서 스펙트럼 데이터 추출 ──
+    spectra_group = td['Spectra']
+    if spectra_group is None:
+        raise RuntimeError("No 'Spectra' group found in TDMS file")
+    
+    specs = list(spectra_group.channels())
     Nspec = len(specs)
+    print(f"[info] Found {Nspec} spectrum channels")
+    
     if Nspec == 0:
         raise RuntimeError("No spectrum channels found")
-
-    print(f"[debug] Found {Nspec} spectrum channels")
-
-    # ── 3) (행, 열) 추론 — MATLAB 방식 우선 적용 ──────
-    rows = cols = None
-
+    
+    # ── 3) 이미지 shape 결정 ──
     if image_shape is not None:
         rows, cols = image_shape
     else:
-        # 3‑A) 각 채널 Property 8,9,10 → pcol, startRow, endRow
-        prop8 = specs[0].properties.get(8)   
-        prop9 = specs[0].properties.get(9)
-        prop10 = specs[0].properties.get(10)
-
-        if prop8 and prop9 is not None and prop10 is not None:
-            cols = int(prop8)
-            rows = int(prop10 - prop9 + 1)
-
-        # 3‑B) NI_ArrayRow / NI_ArrayColumn 메타
-        if rows is None or cols is None:
-            row_list = [c.properties.get("NI_ArrayRow") for c in specs
-                        if "NI_ArrayRow" in c.properties]
-            col_list = [c.properties.get("NI_ArrayColumn") for c in specs
-                        if "NI_ArrayColumn" in c.properties]
-            if row_list and col_list:
-                rows = max(row_list) + 1
-                cols = max(col_list) + 1
-
-        # 3‑C) root 'strips', 'top pixel', 'bottom pixel'
-        if rows is None or cols is None:
-            strips = td.properties.get("strips")
-            top = td.properties.get("top pixel")
-            bot = td.properties.get("bottom pixel")
-            if strips and top is not None and bot is not None:
-                cols = int(bot - top + 1)
-                rows = int(strips)
-
-        # 3‑D) perfect‑square fallback
-        if rows is None or cols is None:
-            if int(np.sqrt(Nspec)) ** 2 == Nspec:
-                rows = cols = int(np.sqrt(Nspec))
-
-        # 3‑E) 마지막 보루: root Image_Height / Width
-        if rows is None or cols is None:
-            rows = td.properties.get("Image_Height")
-            cols = td.properties.get("Image_Width")
-
-        if rows is None or cols is None or rows * cols != Nspec:
-            # 추정 시도
-            if Nspec % 49 == 0:  # 49로 나누어떨어지면
-                rows = 49
-                cols = Nspec // 49
-            elif Nspec % 189 == 0:  # 189로 나누어떨어지면
-                rows = Nspec // 189
-                cols = 189
+        # Root properties에서 읽기
+        rows = int(td.properties.get('strips', 0))
+        top = int(td.properties.get('top pixel', 0))
+        bottom = int(td.properties.get('bottom pixel', 0))
+        cols = bottom - top + 1
+        
+        if rows * cols != Nspec:
+            # 재계산 시도
+            if Nspec == 9261:  # Your specific case
+                rows, cols = 49, 189
+            elif Nspec == 8000:  # White/Dark reference
+                rows, cols = 20, 400
             else:
-                raise RuntimeError(f"Cannot infer image shape for {Nspec} channels")
-
-    print(f"[debug] Image shape: {rows} x {cols}")
-
-    # ── 4) MATLAB 과 동일한 채널 → 픽셀 매핑 ────────────
-    def chan_key(ch):
-        col = ch.properties.get("NI_ArrayColumn")
-        row = ch.properties.get("NI_ArrayRow")
-        return (col if col is not None else 0,
-                row if row is not None else 0,
-                ch.name)
-
-    specs.sort(key=chan_key)
-
-    # 벡터 → cube 변환
-    stack = np.vstack([ch[:] for ch in specs])  # (Nspec, L)
-    cube = stack.reshape(cols, rows, len(wl), order='C').transpose(1, 0, 2)  # (rows, cols, L)
-
+                raise RuntimeError(f"Cannot determine image shape for {Nspec} channels")
+    
+    print(f"[info] Image shape: {rows} x {cols}")
+    
+    # ── 4) 데이터 큐브 생성 ──
+    # 각 채널의 데이터를 numpy 배열로
+    spectrum_length = len(specs[0][:])
+    
+    # 파장 배열과 스펙트럼 길이가 일치하는지 확인
+    if len(wl) != spectrum_length:
+        print(f"[warning] Wavelength array length ({len(wl)}) != spectrum length ({spectrum_length})")
+        # 필요하면 interpolation 또는 truncation
+        if len(wl) > spectrum_length:
+            wl = wl[:spectrum_length]
+        else:
+            # 이 경우는 문제가 있음
+            raise RuntimeError(f"Wavelength array too short: {len(wl)} < {spectrum_length}")
+    
+    # 데이터 스택
+    data_list = []
+    for i, ch in enumerate(specs):
+        data = ch[:].astype(np.float32)
+        data_list.append(data)
+        if i % 1000 == 0:
+            print(f"  Loading channel {i}/{Nspec}...")
+    
+    stack = np.vstack(data_list)  # (Nspec, L)
+    
+    # 3D cube로 재구성 - MATLAB column-major order
+    # MATLAB: for c = 1:cols, for r = 1:rows
+    # 이는 column이 먼저 변하므로 Fortran order
+    cube = stack.reshape(cols, rows, spectrum_length, order='F').transpose(1, 0, 2)
+    
     return cube.astype(np.float32), wl.astype(np.float32)
 
 # ------------------- Remaining helpers ----------------------------
@@ -168,28 +128,54 @@ def flatfield_correct(cube: np.ndarray,
                       white_path: Path,
                       dark_path: Path) -> np.ndarray:
     """
-    cube:  (H, W, L) — 이미 preprocess()로 crop된 데이터
-    wvl:   (L,)       — preprocess() 후 self.wvl
-    white_path, dark_path: raw TDMS 파일 경로
+    Flatfield correction with proper wavelength matching
+    cube: (H, W, L) - already cropped data
+    wvl: (L,) - wavelengths after cropping
     """
-    # 1) white/dark 모두 load 후,
-    #    sample과 똑같이 파장 축 crop
+    # Load white and dark references
     w_cube, w_wvl = tdms_to_cube(white_path)
     d_cube, d_wvl = tdms_to_cube(dark_path)
-
-    # wavelength matching
-    idxs = [int(np.argmin(np.abs(w_wvl - v))) for v in wvl]
-    w_crop = w_cube[:, :, idxs]    # → shape (H_w, W_w, L)
+    
+    print(f"[debug] Sample wavelengths: {wvl.min():.1f}-{wvl.max():.1f} nm ({len(wvl)} points)")
+    print(f"[debug] White wavelengths: {w_wvl.min():.1f}-{w_wvl.max():.1f} nm ({len(w_wvl)} points)")
+    
+    # Find matching wavelength indices
+    # White/Dark가 더 많은 포인트를 가지므로 (1340 vs 670)
+    # 각 샘플 파장에 대해 가장 가까운 white/dark 파장 찾기
+    idxs = []
+    for wl_val in wvl:
+        idx = np.argmin(np.abs(w_wvl - wl_val))
+        idxs.append(idx)
+    idxs = np.array(idxs)
+    
+    print(f"[debug] Wavelength matching: using indices {idxs[0]}-{idxs[-1]} from white/dark")
+    
+    # Extract matching wavelengths
+    w_crop = w_cube[:, :, idxs]
     d_crop = d_cube[:, :, idxs]
-
-    # 2) 공간 방향 평균해서 1D 참조 스펙트럼으로
-    w_ref = w_crop.mean(axis=(0, 1))   # shape (L,)
-    d_ref = d_crop.mean(axis=(0, 1))   # shape (L,)
-
-    # 3) broadcast 보정
-    num = cube - d_ref[None, None, :]
-    den = np.clip((w_ref - d_ref)[None, None, :], 1e-9, None)
-    return num / den
+    
+    # Spatial average to get reference spectra
+    w_ref = w_crop.mean(axis=(0, 1))  # (L,)
+    d_ref = d_crop.mean(axis=(0, 1))  # (L,)
+    
+    print(f"[debug] White reference range: [{w_ref.min():.1f}, {w_ref.max():.1f}]")
+    print(f"[debug] Dark reference range: [{d_ref.min():.1f}, {d_ref.max():.1f}]")
+    
+    # Apply correction
+    numerator = cube - d_ref[None, None, :]
+    denominator = (w_ref - d_ref)[None, None, :]
+    
+    # Avoid division by zero
+    denominator = np.where(denominator > 0, denominator, 1.0)
+    
+    corrected = numerator / denominator
+    
+    # Clip extreme values
+    corrected = np.clip(corrected, 0, 10)  # Reasonable range for corrected data
+    
+    print(f"[debug] After flatfield: range [{corrected.min():.3f}, {corrected.max():.3f}]")
+    
+    return corrected
 
 def crop_and_bg(cube, wavelengths, args):
 
@@ -464,76 +450,3 @@ def select_representative_spectra(cube, wavelengths, clusters, args):
     print(f"\n[Summary] {len(representatives)} valid particles from {len(clusters)} clusters")
     return representatives
 
-def save_dfs_particle_map(max_map, representatives, output_path, sample_name):
-    """
-    DFS 전용 particle map 저장
-    - Max intensity map을 배경으로
-    - 검출된 파티클 위치 표시
-    """
-    fig, ax = plt.subplots(figsize=(10, 10))
-    
-    # Max intensity map 표시
-    vmin, vmax = np.percentile(max_map[max_map > 0], [5, 95]) if np.any(max_map > 0) else (0, 1)
-    
-    im = ax.imshow(max_map,
-                   cmap='hot',  # DFS 데이터에 적합한 colormap
-                   origin='lower',  # 일반적인 좌표계
-                   vmin=vmin,
-                   vmax=vmax,
-                   interpolation='nearest')
-    
-    # Colorbar
-    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label('Max Intensity (500-800 nm)', fontsize=12)
-    
-    # 파티클 마커 표시
-    for i, rep in enumerate(representatives):
-        row, col = rep['row'], rep['col']
-        
-        # 흰색 원 with 검은 테두리 (잘 보이도록)
-        circle_outer = plt.Circle((col, row), 
-                                 radius=5,
-                                 edgecolor='black',
-                                 facecolor='none',
-                                 linewidth=3)
-        circle_inner = plt.Circle((col, row), 
-                                 radius=5,
-                                 edgecolor='white',
-                                 facecolor='none',
-                                 linewidth=2)
-        ax.add_patch(circle_outer)
-        ax.add_patch(circle_inner)
-        
-        # 파티클 번호
-        ax.text(col + 7, row + 7,
-                f'{i}',
-                color='white',
-                fontsize=12,
-                fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.3',
-                         facecolor='black',
-                         edgecolor='white',
-                         alpha=0.8))
-        
-        # 추가 정보 (작은 글씨로)
-        ax.text(col + 7, row - 7,
-                f'{rep["peak_wl"]:.0f}nm',
-                color='yellow',
-                fontsize=8,
-                fontweight='bold',
-                ha='left')
-    
-    # 제목과 축 라벨
-    ax.set_title(f'{sample_name} - DFS Particle Map ({len(representatives)} particles)', 
-                fontsize=16, pad=10)
-    ax.set_xlabel('X (pixels)', fontsize=12)
-    ax.set_ylabel('Y (pixels)', fontsize=12)
-    
-    # Grid
-    ax.grid(True, alpha=0.3, linestyle='--', color='white')
-    
-    plt.tight_layout()
-    fig.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-    
-    print(f"[info] Saved DFS particle map: {output_path}")
