@@ -105,7 +105,8 @@ def flatfield_correct_local(cube: np.ndarray,
                             wvl: np.ndarray, 
                             white_path: Path, 
                             clusters: List[Dict], 
-                            representatives: List[Dict]) -> np.ndarray:
+                            representatives: List[Dict],
+                            args: None) -> np.ndarray:
     """
     Local dark correction을 사용한 flatfield correction
     각 클러스터 주변에서 가장 어두운 영역을 dark reference로 사용
@@ -113,7 +114,7 @@ def flatfield_correct_local(cube: np.ndarray,
     # White reference는 global로 로드
     w_cube, w_wvl = tdms_to_cube(white_path)
 
-    H_w, W_w, L_w = w.cube.shape
+    H_w, W_w, L_w = w_cube.shape
     L_sample = len(wvl)
 
     if L_w == 2 * L_sample:

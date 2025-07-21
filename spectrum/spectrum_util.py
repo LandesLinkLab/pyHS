@@ -208,7 +208,7 @@ def fit_lorentz(y, x, args):
         print(f"[warning] Fitting failed: {str(e)}")
         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0, 'x0': 0, 'gamma': 0}, 0.0
 
-def plot_spectrum(x, y, y_fit, title, out_png, dpi=300, params=None, snr=None):
+def plot_spectrum(x, y, y_fit, title, out_png, dpi=300, params=None, snr=None, args = None):
     """
     Plot spectrum exactly like MATLAB version
     """

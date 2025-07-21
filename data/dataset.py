@@ -26,30 +26,30 @@ class Dataset(object):
 
         dc_mode = self.args.get('DC_MODE', 'global')
 
-            if dc_mode == 'global':
+        if dc_mode == 'global':
 
-                if not self.args.get('SKIP_FLATFIELD', False):
-                    self.flatfield()
-                self.create_dfs_map()
-                self.detect_particles_dfs()
-                self.select_representatives()
+            if not self.args.get('SKIP_FLATFIELD', False):
+                self.flatfield()
+            self.create_dfs_map()
+            self.detect_particles_dfs()
+            self.select_representatives()
 
-            elif: dc_mode == 'local':
+        elif dc_mode == 'local':
 
-                self.create_dfs_map()
-                self.detect_particles_dfs()
-                self.select_representatives()
+            self.create_dfs_map()
+            self.detect_particles_dfs()
+            self.select_representatives()
 
-                if not self.args.get('SKIP_FLATFIELD', False):
+            if not self.args.get('SKIP_FLATFIELD', False):
 
-                    print("\n[Step] Applying local dark correction...")
-                    w = os.path.join(self.args['DATA_DIR'], self.args['WHITE_FILE'])
+                print("\n[Step] Applying local dark correction...")
+                w = os.path.join(self.args['DATA_DIR'], self.args['WHITE_FILE'])
 
-                    self.cube = du.flatfield_correct_local(self.cube, self.wvl, w, self.clusters, self.representatives)
+                self.cube = du.flatfield_correct_local(self.cube, self.wvl, w, self.clusters, self.representatives, self.args)
 
-                    wl_range = self.args.get('DFS_WL_RANGE', (500, 800))
-                    self.max_map = du.create_dfs_max_intensity_map(self.cube, self.wvl, wl_range)
-                    self._save_debug_image(self.max_map, "dfs_max_map_corrected", cmap='hot')
+                wl_range = self.args.get('DFS_WL_RANGE', (500, 800))
+                self.max_map = du.create_dfs_max_intensity_map(self.cube, self.wvl, wl_range)
+                self._save_debug_image(self.max_map, "dfs_max_map_corrected", cmap='hot')
 
     
     # ---- 기본 I/O 메서드들 (누락된 부분) ----

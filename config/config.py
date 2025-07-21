@@ -22,7 +22,7 @@ args['CROP_RANGE_NM'] = (500, 850)
 args['BACKGROUND_PERC'] = 0.01
 args['SKIP_FLATFIELD'] = False  # Flatfield 사용
 
-args['DC_MODE'] = "global" # local
+args['DC_MODE'] = "local" # local
 args['DC_LOCAL_SEARCH_RADIUS'] = 20 # searching radius
 args['DC_LOCAL_PERCENTILE'] = 1 
 
