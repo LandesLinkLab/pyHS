@@ -27,132 +27,102 @@ def _is_lambda_channel(ch):
     return "nm" in unit
 
 # -------------------- TDMS -> cube --------------------------------
-def tdms_to_cube(path: Path, image_shape: Optional[Tuple[int,int]] = None):
+def tdms_to_cube(path: Path,
+                 image_shape: Optional[Tuple[int, int]] = None):
     """
-    Load a hyperspectral TDMS file into a (H, W, L) cube + wavelength vector.
-    
-    Parameters
-    ----------
-    path : Path
-        Path to the .tdms file.
-    image_shape : Tuple[int,int], optional
-        If provided, force (rows, cols) = image_shape regardless of metadata.
-    
-    Returns
-    -------
-    cube : np.ndarray, shape (H, W, L)
-    wl   : np.ndarray, shape (L,)
+    MATLAB‑버전과 동일한 로직으로 TDMS → (H,W,L) cube 변환
     """
     td = TdmsFile.read(path)
-    # 모든 채널(flat list) 수집
-    channels = [ch for g in td.groups() for ch in g.channels()]
+    ch_all = [ch for g in td.groups() for ch in g.channels()]
 
-    # λ-axis 채널 찾기
-    def _is_lambda_channel(ch):
-        try:
-            arr = ch[:]
-            if isinstance(arr, np.ndarray) and arr.dtype.kind == 'f' \
-               and arr.ndim == 1 and arr.size > 1 \
-               and np.all(np.diff(arr) > 0):
-                return True
-        except:
-            pass
-        name = ch.name.lower()
-        if any(k in name for k in ("wave","lambda","wl","wavelength","nm")):
+    # ── 1) λ‑축 채널 식별 ──────────────────────────────
+    def _is_lambda(ch):
+        v = ch[:]
+        if v.ndim == 1 and v.size > 1 and np.all(np.diff(v) > 0):
             return True
-        unit = str(ch.properties.get("unit_string") or ch.properties.get("Unit") or "").lower()
+        name = ch.name.lower()
+        if any(k in name for k in ("wave", "lambda", "wl", "wavelength", "nm")):
+            return True
+        unit = str(ch.properties.get("unit_string")
+                   or ch.properties.get("Unit") or "").lower()
         return "nm" in unit
 
-    wl_chs = [ch for ch in channels if _is_lambda_channel(ch)]
-    if not wl_chs:
-        raise RuntimeError("λ-axis channel not found.")
-    wl = wl_chs[0][:]
+    wl_ch   = next((c for c in ch_all if _is_lambda(c)), None)
+    if wl_ch is None:
+        raise RuntimeError("λ‑axis channel not found")
+    wl      = wl_ch[:].astype(np.float32)
 
-    # 스펙트럼 채널들만 골라
-    specs = [ch for ch in channels if len(ch) == len(wl) and ch not in wl_chs]
-    if not specs:
-        raise RuntimeError("No spectrum channels found.")
-    N = len(specs)
+    # ── 2) 스펙트럼 채널 목록 (λ‑축과 길이가 같은 채널) ──
+    specs   = [c for c in ch_all if len(c) == len(wl) and c is not wl_ch]
+    Nspec   = len(specs)
+    if Nspec == 0:
+        raise RuntimeError("No spectrum channels found")
 
-    # 1) config로 강제 shape
+    # ── 3) (행, 열) 추론 — MATLAB 방식 우선 적용 ──────
     rows = cols = None
+
     if image_shape is not None:
         rows, cols = image_shape
+
     else:
-        # 2) NI_ArrayRow / NI_ArrayColumn 메타
-        row_props = [ch.properties.get("NI_ArrayRow")    for ch in specs if "NI_ArrayRow"    in ch.properties]
-        col_props = [ch.properties.get("NI_ArrayColumn") for ch in specs if "NI_ArrayColumn" in ch.properties]
+        # 3‑A) 각 채널 Property 8,9,10 → pcol, startRow, endRow
+        prop8 = specs[0].properties.get(8)   # 모든 채널에 동일
+        prop9 = specs[0].properties.get(9)
+        prop10 = specs[0].properties.get(10)
 
-        if row_props and col_props:
+        if prop8 and prop9 is not None and prop10 is not None:
+            cols = int(prop8)
+            rows = int(prop10 - prop9 + 1)
 
-            n_rows = max(row_props) + 1
-            n_cols = max(col_props) + 1
-
-            if n_rows * n_cols == N:
-
-                rows, cols = n_rows, n_cols
-
-                print('[info] NI_ArrayRow and NI_ArrayColumn used for image shape')
-
-            else: RuntimeError("[error] Shape of image mismatch")
-
-        # 3) root metadata 'strips' / 'top pixel' / 'bottom pixel'
+        # 3‑B) NI_ArrayRow / NI_ArrayColumn 메타
         if rows is None or cols is None:
+            row_list = [c.properties.get("NI_ArrayRow") for c in specs
+                        if "NI_ArrayRow" in c.properties]
+            col_list = [c.properties.get("NI_ArrayColumn") for c in specs
+                        if "NI_ArrayColumn" in c.properties]
+            if row_list and col_list:
+                rows = max(row_list) + 1
+                cols = max(col_list) + 1
 
+        # 3‑C) root 'strips', 'top pixel', 'bottom pixel'
+        if rows is None or cols is None:
             strips = td.properties.get("strips")
             top    = td.properties.get("top pixel")
             bot    = td.properties.get("bottom pixel")
+            if strips and top is not None and bot is not None:
+                cols = int(bot - top + 1)
+                rows = int(strips)
 
-            if strips is not None and top is not None and bot is not None:
+        # 3‑D) perfect‑square fallback
+        if rows is None or cols is None:
+            if int(np.sqrt(Nspec)) ** 2 == Nspec:
+                rows = cols = int(np.sqrt(Nspec))
 
-                n_cols = int(bot - top + 1)
-                n_rows = int(strips)
-
-                # n_rows = int(bot - top + 1)
-                # n_cols = int(strips)
-
-                if n_rows * n_cols == N:
-
-                    rows, cols = n_rows, n_cols
-
-                    print('[info] strips, top pixel, and bottom pixel used for image shape')
-
-                else: RuntimeError("[error] Shape of image mismatch")
-
-    # 4) fallback: perfect square
-    if rows is None or cols is None:
-
-        if int(np.sqrt(N))**2 == N:
-
-            rows = cols = int(np.sqrt(N))
-        
-        else:
-            # 5) TDMS root 속성 Image_Height/Image_Width
+        # 3‑E) 마지막 보루: root Image_Height / Width
+        if rows is None or cols is None:
             rows = td.properties.get("Image_Height")
             cols = td.properties.get("Image_Width")
 
-            print('[info] Image_Height and Image_Width used for image shape')
+        if rows is None or cols is None or rows * cols != Nspec:
+            raise RuntimeError("Cannot infer image shape")
 
-            if rows is None or cols is None:
+    # ── 4) MATLAB 과 동일한 채널 → 픽셀 매핑 ────────────
+    #   MATLAB: for c = 1:cols, for r = 1:rows
+    #   → column 우선, row 2nd → (r 변수가 더 빨리 변함)
+    #   채널의 이름(또는 NI_ArrayColumn,Row)이 해당 순서라고 가정
+    def chan_key(ch):
+        # NI_ArrayColumn/Row 우선, 없으면 이름
+        col = ch.properties.get("NI_ArrayColumn")
+        row = ch.properties.get("NI_ArrayRow")
+        return (col if col is not None else 0,
+                row if row is not None else 0,
+                ch.name)
 
-                raise RuntimeError("[error] Cannot infer image size")
+    specs.sort(key=chan_key)
 
-    if row_props and col_props:
-
-        cube = np.empty((rows, cols, len(wl)), dtype = np.float32)
-
-        for ch in specs:
-
-            r = ch.properties["NI_ArrayRow"]
-            c = ch.properties["NI_ArrayColumn"]
-            cube[r, c, :] = ch[:]
-
-    else:
-
-        specs.sort(key = lambda c: c.name)
-        arr  = np.stack([ch[:] for ch in specs], axis=0)
-        cube = arr.reshape((rows, cols, -1), order='F')
-
+    # 벡터 → cube 변환 (C‑order → MATLAB column‑major 맞추기)
+    stack = np.vstack([ch[:] for ch in specs])  # (Nspec, L)
+    cube  = (stack.reshape(cols, rows, len(wl), order='C').transpose(1, 0, 2))                      # (rows, cols, L)
 
     return cube.astype(np.float32), wl.astype(np.float32)
 
