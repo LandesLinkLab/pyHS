@@ -22,34 +22,43 @@ class Dataset(object):
         
     def run_dataset(self):
         self.load_cube()
+
+        bg_mode = self.args.get('BACKGROUND_MODE', 'global')
         self.preprocess()
 
-        dc_mode = self.args.get('DC_MODE', 'global')
+        if bg_mode == 'global':
 
-        if dc_mode == 'global':
-
-            if not self.args.get('SKIP_FLATFIELD', False):
-                self.flatfield()
+            self.preprocess()
+            self.flatfield()
             self.create_dfs_map()
             self.detect_particles_dfs()
             self.select_representatives()
 
-        elif dc_mode == 'local':
+        elif bg_mode == 'local':
 
+            self.preprocess()
+            self.flatfield()
             self.create_dfs_map()
             self.detect_particles_dfs()
             self.select_representatives()
 
-            if not self.args.get('SKIP_FLATFIELD', False):
+            if self.representatives:
 
-                print("\n[Step] Applying local dark correction...")
-                w = os.path.join(self.args['DATA_DIR'], self.args['WHITE_FILE'])
-
-                self.cube = du.flatfield_correct_local(self.cube, self.wvl, w, self.clusters, self.representatives, self.args)
+                print("\n[Step] Applying local background correction...")
+                self.cube = du.apply_local_background(self.cube, self.clusters, self.representatives, self.args)
 
                 wl_range = self.args.get('DFS_WL_RANGE', (500, 800))
                 self.max_map = du.create_dfs_max_intensity_map(self.cube, self.wvl, wl_range)
-                self._save_debug_image(self.max_map, "dfs_max_map_corrected", cmap='hot')
+                du.save_debug_image(self.args, self.max_map, "dfs_max_map_bg_corrected", cmap = 'hot')
+
+                for rep in self.representatives:
+
+                    rep['spectrum'] = self.cube[rep['row'], rep['col'], :]
+
+                    peak_idx = np.argmax(rep['spectrum'])
+                    rep['peak_wl'] = self.wvl[peak_idx]
+                    rep['peak_intensity'] = rep['spectrum'][peak_idx]
+
 
     
     # ---- 기본 I/O 메서드들 (누락된 부분) ----
@@ -67,34 +76,20 @@ class Dataset(object):
         print(f"  - Wavelengths: {self.wvl.min():.1f}-{self.wvl.max():.1f} nm, {len(self.wvl)} points")
         
         # Save a debug image of raw data
-        self._save_debug_image(self.cube.sum(axis=2), "raw_sum")
+        du.save_debug_image(self.args, self.cube.sum(axis=2), "raw_sum", cmap = 'hot')
 
 
     def flatfield(self):
         print(f"\n[debug] Applying flatfield correction...")
         
         w = os.path.join(self.args['DATA_DIR'], self.args['WHITE_FILE'])
+        d = os.path.join(self.args['DATA_DIR'], self.args['DARK_FILE'])
+
+        print(f"  - White reference: {w}")
+        print(f"  - Dark reference: {d} (global mode)")
         
         cube_before = self.cube.copy()
-        
-        dc_mode = self.args.get('DC_MODE', 'global')
-        
-        if dc_mode == 'global':
-            d = os.path.join(self.args['DATA_DIR'], self.args['DARK_FILE'])
-            print(f"  - White reference: {w}")
-            print(f"  - Dark reference: {d} (global mode)")
-            self.cube = du.flatfield_correct(self.cube, self.wvl, w, d)
-            
-        elif dc_mode == 'local':
-            print(f"  - White reference: {w}")
-            print(f"  - Dark mode: local (searching near each cluster)")
-            
-            self.need_local_dark = True
-
-            return
-        
-        else:
-            raise ValueError(f"Unknown DC_MODE: {dc_mode}")
+        self.cube = du.flatfield_correct(self.cube, self.wvl, w, d)
         
         print(f"[debug] After flatfield:")
         print(f"  - Data range: [{self.cube.min():.2f}, {self.cube.max():.2f}]")
@@ -106,7 +101,7 @@ class Dataset(object):
             print("[warning] Skipping flatfield correction")
             self.cube = cube_before
         
-        self._save_debug_image(self.cube.sum(axis=2), "flatfield_sum")
+        du.save_debug_image(self.args, self.cube.sum(axis=2), "flatfield_sum", cmap = 'hot')
         
     def preprocess(self):
         print(f"\n[debug] Preprocessing...")
@@ -120,7 +115,7 @@ class Dataset(object):
         print(f"  - Data range: [{self.cube.min():.2f}, {self.cube.max():.2f}]")
         print(f"  - Wavelengths: {self.wvl.min():.1f}-{self.wvl.max():.1f} nm")
         
-        self._save_debug_image(self.cube.sum(axis=2), "preprocessed_sum")
+        du.save_debug_image(self.args, self.cube.sum(axis=2), "preprocessed_sum", cmap = 'hot')
     
     # ---- DFS 전용 메서드들 ----
     def create_dfs_map(self):
@@ -132,7 +127,7 @@ class Dataset(object):
         self.max_map = du.create_dfs_max_intensity_map(self.cube, self.wvl, wl_range)
         
         # Debug 이미지 저장
-        self._save_debug_image(self.max_map, "dfs_max_map", cmap='hot')
+        du.save_debug_image(self.args, self.max_map, "dfs_max_map", cmap='hot')
     
     def detect_particles_dfs(self):
         """Detect particles using DFS-specific method"""
@@ -141,7 +136,7 @@ class Dataset(object):
         self.labels, self.clusters = du.detect_dfs_particles(self.max_map, self.args)
         
         # Debug 이미지 저장
-        self._save_debug_dfs_detection()
+        du.save_debug_dfs_detection(self.args, self.max_map, self.labels, self.clusters)
 
     def select_representatives(self):
 
@@ -159,66 +154,3 @@ class Dataset(object):
                                        for r in self.representatives])
         else:
             self.centroids = np.array([])
-    
-    # ---- Debug 이미지 저장 메서드들 ----
-    def _save_debug_image(self, img, name, cmap='hot'):
-        """Save debug images"""
-        if not self.args.get('DEBUG', False):
-            return
-            
-        out_dir = Path(self.args['OUTPUT_DIR']) / "debug"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        if img.ndim == 3:  # RGB
-            ax.imshow(img, origin='lower')
-            ax.set_title(f"{name} (RGB)")
-        else:  # Grayscale
-            im = ax.imshow(img, cmap=cmap, origin='lower')
-            plt.colorbar(im, ax=ax)
-            ax.set_title(f"{name} (range: [{img.min():.2f}, {img.max():.2f}])")
-        
-        ax.set_xlabel('X (pixels)')
-        ax.set_ylabel('Y (pixels)')
-        
-        plt.tight_layout()
-        plt.savefig(out_dir / f"{self.sample_name}_{name}.png", dpi=150)
-        plt.close()
-    
-    def _save_debug_dfs_detection(self):
-        """Save debug image for DFS particle detection"""
-        if not self.args.get('DEBUG', False):
-            return
-            
-        out_dir = Path(self.args['OUTPUT_DIR']) / "debug"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
-        
-        # 1. Max intensity map
-        im1 = ax1.imshow(self.max_map, cmap='hot', origin='lower')
-        ax1.set_title('Max Intensity Map (500-800nm)')
-        plt.colorbar(im1, ax=ax1)
-        
-        # 2. Binary mask (threshold 적용 후)
-        threshold = self.args.get('DFS_INTENSITY_THRESHOLD', 0.1)
-        normalized = (self.max_map - self.max_map.min()) / (self.max_map.max() - self.max_map.min())
-        mask = normalized > threshold
-        ax2.imshow(mask, cmap='gray', origin='lower')
-        ax2.set_title(f'Binary Mask (threshold={threshold})')
-        
-        # 3. Labeled clusters
-        ax3.imshow(self.labels, cmap='tab20', origin='lower')
-        ax3.set_title(f'Detected Clusters (n={len(self.clusters)})')
-        
-        # 클러스터 중심 표시
-        for cluster in self.clusters:
-            center = cluster['center']
-            ax3.plot(center[1], center[0], 'w+', markersize=10, markeredgewidth=2)
-            ax3.text(center[1]+2, center[0]+2, str(cluster['label']), 
-                    color='white', fontsize=8, fontweight='bold')
-        
-        plt.tight_layout()
-        plt.savefig(out_dir / f"{self.sample_name}_dfs_detection.png", dpi=150)
-        plt.close()

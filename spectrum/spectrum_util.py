@@ -281,7 +281,7 @@ def save_dfs_particle_map(max_map, representatives, output_path, sample_name):
     
     # Colorbar
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label('Max Intensity (500-800 nm)', fontsize=12)
+    cbar.set_label('Max Intensity', fontsize=12)
     
     # Particle marker setup (circle + number + center wavelength)
     for i, rep in enumerate(representatives):

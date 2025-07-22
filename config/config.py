@@ -19,19 +19,20 @@ args['DFS_INTENSITY_THRESHOLD'] = 0.05  # 낮춰서 더 많은 파티클 검출
 # Preprocessing
 # TDMS 파일의 전체 범위가 388-897nm이므로, 500-850nm로 crop
 args['CROP_RANGE_NM'] = (500, 850)  
-args['BACKGROUND_PERC'] = 0.01
-args['SKIP_FLATFIELD'] = False  # Flatfield 사용
 
-args['DC_MODE'] = "local" # local
-args['DC_LOCAL_SEARCH_RADIUS'] = 20 # searching radius
-args['DC_LOCAL_PERCENTILE'] = 1 
+args['BACKGROUND_MODE'] = 'local' # 'global' or 'local'
+args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20 
+args['BACKGROUND_LOCAL_PERCENTILE'] = 1
+args['BACKGROUND_GLOBAL_PERCENTILE'] = 1 # option for global
+
+args['SKIP_FLATFIELD'] = False  # Flatfield 사용
 
 # Particle detection
 args['MIN_PIXELS_CLUS'] = 3  # 최소 클러스터 크기 (더 작게)
 args['PEAK_TOL_NM'] = 20.0  # FWHM tolerance
 
 # Analysis settings
-args['FIT_RANGE_NM'] = (500, 800)
+args['FIT_RANGE_NM'] = (500, 850)
 args['REP_CRITERION'] = "max_int"  # 대표 픽셀 선택 기준
 args['INTEGRATION_SIZE'] = 3  # 스펙트럼 추출 시 통합 크기
 args['BACKGROUND_OFFSET'] = 7  # 배경 추출 오프셋
