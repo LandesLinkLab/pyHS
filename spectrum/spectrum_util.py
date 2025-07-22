@@ -1,12 +1,14 @@
 import numpy as np
-from scipy.optimize import curve_fit
+from pathlib import Path
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+from typing import List, Dict, Tuple, Optional, Any, Union
 
-def get_peak(spec, wavelengths):
+def get_peak(spec: np.ndarray, wavelengths: np.ndarray) -> Tuple[float, float]:
     idx = int(np.argmax(spec))
     return float(wavelengths[idx]), float(spec[idx])
 
-def extract_spectrum_with_background(cube, row, col, args):
+def extract_spectrum_with_background(cube: np.ndarray, row: int, col: int, args: Dict[str, Any]) -> np.ndarray:
     """
     Extract spectrum from a particle location with background subtraction
     Similar to MATLAB version
@@ -38,7 +40,53 @@ def extract_spectrum_with_background(cube, row, col, args):
     
     return corrected_spec
 
-def pick_manual_representatives(cube, wavelengths, args):
+def extract_spectrum_matlab_style(args: Dict[str, Any], cube: np.ndarray, row: int, col: int) -> np.ndarray:
+    """
+    MATLAB과 정확히 동일한 방식의 background subtraction
+    MATLAB 코드의 이 부분을 재현:
+    
+    % Background extraction
+    x_part = matrix_index_ref(n+size(matrix_index_ref,1));
+    y_part = matrix_index_ref(n)+7;
+    for m = int_var_low:int_var_high
+        for l = int_var_low:int_var_high
+            a = x_part + m;
+            b = y_part + l;
+            part_spec = part_spec + specfin(a,b,:);
+        end
+    end
+    """
+    int_size = args.get('INTEGRATION_SIZE', 3)
+    bg_offset = args.get('BACKGROUND_OFFSET', 7)
+    half_size = (int_size - 1) // 2
+    
+    H, W, L = cube.shape
+    
+    # Particle spectrum (MATLAB의 part_spec)
+    particle_spec = np.zeros(L)
+    for m in range(-half_size, half_size + 1):
+        for l in range(-half_size, half_size + 1):
+            r = row + m
+            c = col + l
+            if 0 <= r < H and 0 <= c < W:
+                particle_spec += cube[r, c, :]
+    
+    # Background spectrum (MATLAB의 background, y_part = row+7)
+    bg_row = row + bg_offset
+    background_spec = np.zeros(L)
+    for m in range(-half_size, half_size + 1):
+        for l in range(-half_size, half_size + 1):
+            r = bg_row + m
+            c = col + l
+            if 0 <= r < H and 0 <= c < W:
+                background_spec += cube[r, c, :]
+    
+    # Subtract background (MATLAB: part_spec - background)
+    corrected = particle_spec - background_spec
+    return np.maximum(corrected, 0)  # No negative values
+
+
+def pick_manual_representatives(cube: np.ndarray, wavelengths: np.ndarray, args: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Process manually specified coordinates"""
     reps = []
     
@@ -58,73 +106,7 @@ def pick_manual_representatives(cube, wavelengths, args):
     
     return reps
 
-# def fit_lorentz(y, x, args):
-#     """
-#     Fit Lorentzian function to spectrum
-#     Using the same form as MATLAB: (2*a/pi) * (c / (4*(x-b)^2 + c^2))
-#     """
-#     def lorentz_matlab_form(x, a, b, c):
-#         # MATLAB form: (2*a/pi) * (c / (4*(x-b)^2 + c^2))
-#         return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
-    
-#     # Check if input data is valid
-#     if len(y) == 0 or np.all(y == 0) or np.isnan(y).any():
-#         print("[warning] Invalid spectrum data for fitting")
-#         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0, 'x0': 0, 'gamma': 0}, 0.0
-    
-#     # Initial guess
-#     idx = int(np.argmax(y))
-#     if y[idx] <= 0:
-#         print("[warning] No positive values in spectrum")
-#         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0, 'x0': 0, 'gamma': 0}, 0.0
-    
-#     # Better initial guesses
-#     a0 = float(y[idx] * np.pi / 2)  # Adjust for the 2/pi factor
-#     b0 = float(x[idx])  # Peak position
-    
-#     # Estimate FWHM from data
-#     half_max = y[idx] / 2
-#     indices_above_half = np.where(y > half_max)[0]
-#     if len(indices_above_half) > 1:
-#         c0 = float(x[indices_above_half[-1]] - x[indices_above_half[0]])
-#     else:
-#         c0 = 70.0  # Default FWHM
-    
-#     p0 = [a0, b0, c0]
-    
-#     try:
-#         # Set bounds similar to MATLAB
-#         bounds = ([0, x.min(), 0], [np.inf, x.max(), np.inf])
-        
-#         popt, pcov = curve_fit(lorentz_matlab_form, x, y, p0=p0, 
-#                               bounds=bounds, maxfev=8000, 
-#                               method='trf')  # More robust method
-        
-#         y_fit = lorentz_matlab_form(x, *popt)
-        
-#         # Calculate R-squared
-#         ss_res = np.sum((y - y_fit)**2)
-#         ss_tot = np.sum((y - y.mean())**2)
-#         rsq = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-        
-#         # Return with MATLAB-like parameter names
-#         params = {
-#             'a': popt[0], 
-#             'b1': popt[1],  # λ_max
-#             'c1': popt[2],  # FWHM (Γ)
-#             'x0': popt[1],  # Alternative name
-#             'gamma': popt[2]  # Alternative name
-#         }
-        
-#         print(f"[debug] Fit successful: λ_max={popt[1]:.1f}, FWHM={popt[2]:.1f}, R²={rsq:.3f}")
-        
-#         return y_fit, params, float(rsq)
-    
-#     except Exception as e:
-#         print(f"[warning] Fitting failed: {str(e)}")
-#         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0, 'x0': 0, 'gamma': 0}, 0.0
-
-def fit_lorentz(y, x, args):
+def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
     """
     Fit Lorentzian function to spectrum
     Using the same form as MATLAB: (2*a/pi) * (c / (4*(x-b)^2 + c^2))
@@ -208,7 +190,15 @@ def fit_lorentz(y, x, args):
         print(f"[warning] Fitting failed: {str(e)}")
         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0, 'x0': 0, 'gamma': 0}, 0.0
 
-def plot_spectrum(x, y, y_fit, title, out_png, dpi=300, params=None, snr=None, args = None):
+def plot_spectrum(x: np.ndarray, 
+                y: np.ndarray, 
+                y_fit: np.ndarray, 
+                title: str, 
+                out_png: Path, 
+                dpi: int = 300, 
+                params: Optional[Dict[str, float]] = None, 
+                snr: Optional[float] = None,
+                args: Optional[Dict[str, Any]] = None) -> None:
     """
     Plot spectrum exactly like MATLAB version
     """
@@ -266,7 +256,10 @@ def plot_spectrum(x, y, y_fit, title, out_png, dpi=300, params=None, snr=None, a
     fig.savefig(out_png, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 
-def save_dfs_particle_map(max_map, representatives, output_path, sample_name):
+def save_dfs_particle_map(max_map: np.ndarray, 
+                        representatives: List[Dict[str, Any]], 
+                        output_path: Path, 
+                        sample_name: str) -> None:
 
     fig, ax = plt.subplots(figsize=(10, 10))
     

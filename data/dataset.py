@@ -45,7 +45,7 @@ class Dataset(object):
             if self.representatives:
 
                 print("\n[Step] Applying local background correction...")
-                self.cube = du.apply_local_background(self.cube, self.clusters, self.representatives, self.args)
+                self.cube = du.apply_local_background(self.args, self.cube, self.clusters, self.representatives)
 
                 wl_range = self.args.get('DFS_WL_RANGE', (500, 800))
                 self.max_map = du.create_dfs_max_intensity_map(self.cube, self.wvl, wl_range)
@@ -106,9 +106,9 @@ class Dataset(object):
     def preprocess(self):
         print(f"\n[debug] Preprocessing...")
         print(f"  - Crop range: {self.args['CROP_RANGE_NM']} nm")
-        print(f"  - Background percentile: {self.args['BACKGROUND_PERC']}")
+        print(f"  - Background percentile: {self.args['BACKGROUND_GLOBAL_PERCENTILE']}")
         
-        self.cube, self.wvl = du.crop_and_bg(self.cube, self.wvl, self.args)
+        self.cube, self.wvl = du.crop_and_bg(self.args, self.cube, self.wvl)
         
         print(f"[debug] After preprocessing:")
         print(f"  - Shape: {self.cube.shape}")

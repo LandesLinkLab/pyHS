@@ -20,7 +20,7 @@ args['DFS_INTENSITY_THRESHOLD'] = 0.05  # 낮춰서 더 많은 파티클 검출
 # TDMS 파일의 전체 범위가 388-897nm이므로, 500-850nm로 crop
 args['CROP_RANGE_NM'] = (500, 850)  
 
-args['BACKGROUND_MODE'] = 'local' # 'global' or 'local'
+args['BACKGROUND_MODE'] = 'global' # 'global' or 'local'
 args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20 
 args['BACKGROUND_LOCAL_PERCENTILE'] = 1
 args['BACKGROUND_GLOBAL_PERCENTILE'] = 1 # option for global

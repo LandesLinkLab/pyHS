@@ -10,8 +10,8 @@ from skimage.morphology import remove_small_objects, binary_closing, footprint_r
 
 from typing import List, Dict, Tuple, Optional, Any, Union
 
-def tdms_to_cube(path: Path,
-                 image_shape: Optional[Tuple[int, int]] = None):
+def tdms_to_cube(path: str, 
+                image_shape: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, np.ndarray]:
     """
     TDMS → (H,W,L) cube 변환
     Info 그룹의 wvlths 채널에서 파장 정보 추출
@@ -101,10 +101,10 @@ def tdms_to_cube(path: Path,
     return cube.astype(np.float32), wl.astype(np.float32)
 
 # ------------------- Remaining helpers ----------------------------
-def flatfield_correct(cube: np.ndarray,
-                      wvl: np.ndarray,
-                      white_path: Path,
-                      dark_path: Path) -> np.ndarray:
+def flatfield_correct(cube: np.ndarray, 
+                    wvl: np.ndarray, 
+                    white_path: str, 
+                    dark_path: str) -> np.ndarray:
     """
     Flatfield correction - MATLAB과 동일한 방식
     White/Dark의 1340 포인트를 2개씩 평균내어 670 포인트로 변환
@@ -172,7 +172,9 @@ def flatfield_correct(cube: np.ndarray,
     
     return corrected
 
-def crop_and_bg(cube, wavelengths, args):
+def crop_and_bg(args: Dict[str, Any],
+                cube: np.ndarray, 
+                wavelengths: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
     m = (wavelengths >= args["CROP_RANGE_NM"][0]) & (wavelengths <= args["CROP_RANGE_NM"][1])
     cube = cube[:, :, m]
@@ -191,7 +193,7 @@ def crop_and_bg(cube, wavelengths, args):
 
     return cube.astype(np.float32), wavelengths
 
-def apply_local_background(cube, clusters, representatives, args):
+def apply_local_background(args, cube, clusters, representatives):
     """
     Local background correction
     각 클러스터 주변에서 가장 어두운 영역을 background로 사용

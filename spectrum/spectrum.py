@@ -33,11 +33,14 @@ class SpectrumAnalyzer:
         print(f"\n[info] Analyzing {len(self.dataset.representatives)} DFS particles...")
         
         for i, rep in enumerate(self.dataset.representatives):
-            # 대표 스펙트럼 사용
-            y_raw = rep['spectrum']
+
+            row, col = rep['row'], rep['col']
+
+            y_raw = su.extract_spectrum_matlab_style(self.args, self.dataset.cube, row, col)
+            # y_raw = rep['spectrum']
             
             # Lorentzian fitting
-            y_fit, params, r2 = su.fit_lorentz(y_raw, self.dataset.wvl, self.args)
+            y_fit, params, r2 = su.fit_lorentz(self.args, y_raw, self.dataset.wvl)
             
             # S/N 계산
             resid = y_raw - y_fit
@@ -45,17 +48,15 @@ class SpectrumAnalyzer:
             snr = rep['peak_intensity'] / noise
             
             # 스펙트럼 플롯
-            su.plot_spectrum(
-                self.dataset.wvl,
-                y_raw,
-                y_fit,
-                f"Particle {i}",
-                out_dir / f"{self.dataset.sample_name}_particle_{i:03d}.png",
-                dpi = self.args["FIG_DPI"],
-                params = params,
-                snr = snr,
-                args = self.args
-            )
+            su.plot_spectrum(self.dataset.wvl,
+                            y_raw,
+                            y_fit,
+                            f"Particle {i}",
+                            out_dir / f"{self.dataset.sample_name}_particle_{i:03d}.png",
+                            dpi = self.args["FIG_DPI"],
+                            params = params,
+                            snr = snr,
+                            args = self.args)
             
             # 결과 저장
             self.results.append({
