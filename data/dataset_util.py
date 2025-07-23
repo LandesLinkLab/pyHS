@@ -334,17 +334,112 @@ def create_dfs_max_intensity_map(cube, wavelengths, wl_range=(500, 800)):
 
 def detect_dfs_particles(max_map, args):
     """
-    DFS용 wrapper - RGB 이미지 생성 후 MATLAB 방식 적용
+    Detect particle clusters from DFS max intensity map
+    Detection style에 따라 Python 또는 MATLAB 방식 사용
     """
-    # DFS max map을 RGB-like 형태로 변환
-    # MATLAB의 specrgbnorm처럼 3채널로 만들기
-    normalized = (max_map - max_map.min()) / (max_map.max() - max_map.min() + 1e-10)
+    detection_style = args.get('PARTICLE_DETECTION_STYLE', 'python')
     
-    # 3채널 RGB image 생성 (grayscale을 3채널로 복제)
-    rgb_image = np.stack([normalized, normalized, normalized], axis=2)
+    if detection_style == 'matlab':
+        # MATLAB 방식: RGB 이미지 생성 후 다중 threshold
+        normalized = (max_map - max_map.min()) / (max_map.max() - max_map.min() + 1e-10)
+        rgb_image = np.stack([normalized, normalized, normalized], axis=2)
+        return detect_particles_matlab_style(rgb_image, args)
+    else:
+        # Python 방식: threshold 기반 connected components
+        return detect_particles_python_style(max_map, args)
+
+def detect_particles_python_style(max_map, args):
+    """
+    Python 방식의 particle detection (기존 코드)
+    Threshold 기반 connected component 분석
+    """
+    # Check if map has valid data
+    if max_map.max() <= max_map.min():
+        print("[warning] Max map has no contrast")
+        mask = max_map > np.percentile(max_map, 90)
+    else:
+        # Normalize for thresholding
+        normalized = (max_map - max_map.min()) / (max_map.max() - max_map.min())
+        
+        # Adaptive threshold
+        threshold = args.get('DFS_INTENSITY_THRESHOLD', 0.1)
+        
+        # Try Otsu if manual threshold fails
+        try:
+            otsu_val = threshold_otsu(normalized)
+            print(f"[debug] Otsu threshold on normalized data: {otsu_val:.3f}")
+            threshold = min(threshold, otsu_val * 0.8)
+        except:
+            pass
+        
+        mask = normalized > threshold
+        print(f"[debug] Using threshold: {threshold}")
     
-    # MATLAB 방식으로 detection
-    return detect_particles_matlab_style(rgb_image, args)
+    print(f"[debug] Pixels above threshold: {mask.sum()}")
+    
+    # If too few pixels, lower threshold
+    if mask.sum() < 50:
+        print("[warning] Too few pixels detected, lowering threshold")
+        percentile_threshold = 80
+        threshold_value = np.percentile(max_map, percentile_threshold)
+        mask = max_map > threshold_value
+        print(f"[debug] Using percentile {percentile_threshold}: {mask.sum()} pixels above threshold")
+    
+    # Morphological operations
+    mask = binary_closing(mask, footprint_rectangle((3, 3)))
+    
+    # For initial detection, use smaller minimum size
+    min_size = max(2, args.get("MIN_PIXELS_CLUS", 4) // 2)
+    mask = remove_small_objects(mask, min_size)
+    
+    # Label connected components
+    labels, num = ndi.label(mask)
+    
+    print(f"[info] Found {num} particle clusters (min size: {min_size} pixels)")
+    
+    # Get cluster info
+    clusters = []
+    for i in range(1, num + 1):
+        coords = np.argwhere(labels == i)
+        size = len(coords)
+        
+        # Apply original size filter here
+        if size >= args.get("MIN_PIXELS_CLUS", 4):
+            clusters.append({
+                'label': i,
+                'coords': coords,
+                'size': size,
+                'center': coords.mean(axis=0),
+                'max_intensity': max_map[coords[:, 0], coords[:, 1]].max(),
+                'mean_intensity': max_map[coords[:, 0], coords[:, 1]].mean()
+            })
+            print(f"  Cluster {i}: {size} pixels, center at ({coords.mean(axis=0)[0]:.1f}, {coords.mean(axis=0)[1]:.1f}), "
+                  f"max_int={max_map[coords[:, 0], coords[:, 1]].max():.2f}")
+        else:
+            print(f"  Cluster {i}: {size} pixels (skipped - too small)")
+    
+    # If no clusters found, try to find peaks
+    if len(clusters) == 0:
+        print("[warning] No clusters found, trying peak detection")
+        
+        local_max = maximum_filter(max_map, size=5)
+        peaks = (max_map == local_max) & (max_map > np.percentile(max_map, 90))
+        peak_coords = np.argwhere(peaks)
+        
+        print(f"[debug] Found {len(peak_coords)} peaks")
+        
+        for i, (row, col) in enumerate(peak_coords[:20]):
+            clusters.append({
+                'label': i + 1,
+                'coords': np.array([[row, col]]),
+                'size': 1,
+                'center': np.array([row, col]),
+                'max_intensity': max_map[row, col],
+                'mean_intensity': max_map[row, col]
+            })
+    
+    print(f"[info] Python-style detection returning {len(clusters)} valid clusters")
+    return labels, clusters
 
 def detect_particles_matlab_style(rgb_image, args):
     """
@@ -371,11 +466,11 @@ def detect_particles_matlab_style(rgb_image, args):
     # MATLAB: for i=lower:0.001:upper
     thresholds = np.arange(lower, upper + 0.001, 0.001)
     
-    print(f"[debug] Testing {len(thresholds)} thresholds from {lower} to {upper}")
+    print(f"[debug] MATLAB-style: Testing {len(thresholds)} thresholds from {lower} to {upper}")
     
     for thresh_idx, thresh in enumerate(thresholds):
         # Binary thresholding
-        rbs = (rgb_image > thresh).any(axis=2)  # any channel > threshold
+        rbs = (rgb_image > thresh).any(axis=2)
         
         # Clear border and apply mask
         rbs = ndi.binary_fill_holes(rbs)
@@ -386,7 +481,7 @@ def detect_particles_matlab_style(rgb_image, args):
         
         if num_features > 0:
             # Get component sizes
-            sizes = np.bincount(labeled.ravel())[1:]  # exclude background (0)
+            sizes = np.bincount(labeled.ravel())[1:]
             
             # MATLAB logic: remove largest component until only single pixels remain
             while sizes.max() > 1:

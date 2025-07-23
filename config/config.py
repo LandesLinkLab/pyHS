@@ -4,6 +4,7 @@ from pathlib import Path
 home = str(Path.home())
 args = dict()
 
+#================== dataset.py settings ==================
 # Basic settings
 args['SAMPLE_NAME'] = 'AuNR_PMMA'
 args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw')
@@ -12,30 +13,37 @@ args['DARK_FILE'] = "dc.tdms"
 args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS")
 
 # DFS-specific settings
-# 실제 측정 범위가 388-897nm이지만, 관심 영역은 500-1000nm
 args['DFS_WL_RANGE'] = (600, 850)  # DFS max intensity map을 위한 범위
-args['DFS_INTENSITY_THRESHOLD'] = 0.05  # 낮춰서 더 많은 파티클 검출
+args['DFS_INTENSITY_THRESHOLD'] = 0.05  # Python 방식 particle detection threshold
 
 # Preprocessing
-# TDMS 파일의 전체 범위가 388-897nm이므로, 500-850nm로 crop
 args['CROP_RANGE_NM'] = (500, 850)  
 
-# Background mode - MATLAB 방식으로 구현된 global 사용
+# Background mode - MATLAB 방식의 global background
 args['BACKGROUND_MODE'] = 'global'  # 'global' (MATLAB style), 'local'
-args['BACKGROUND_GLOBAL_PERCENTILE'] = 0.1  # MATLAB의 10%
+args['BACKGROUND_PERCENTILE'] = 0.1  # MATLAB의 10%
 args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20 
 args['BACKGROUND_LOCAL_PERCENTILE'] = 1
 
-args['SKIP_FLATFIELD'] = False  # Flatfield 사용
 
-# Particle detection - MATLAB style
-args['PARTICLE_LOWER_BOUND'] = 0      # MATLAB의 lower
-args['PARTICLE_UPPER_BOUND'] = 0.5    # MATLAB의 upper  
-args['NHOOD_SIZE'] = 1                # MATLAB의 nhood
+#================== dataset.py settings ==================
+# Particle detection style
+args['PARTICLE_DETECTION_STYLE'] = 'python'  # 'python' or 'matlab'
 
-args['MIN_PIXELS_CLUS'] = 3  # 최소 클러스터 크기 (더 작게)
-args['PEAK_TOL_NM'] = 20.0  # FWHM tolerance
+# Python style detection parameters
+args['DFS_INTENSITY_THRESHOLD'] = 0.05  # Threshold for Python style
+args['MIN_PIXELS_CLUS'] = 3  # 최소 클러스터 크기 (Python & MATLAB 공통)
 
+# MATLAB style detection parameters  
+args['PARTICLE_LOWER_BOUND'] = 0      # MATLAB의 lower bound
+args['PARTICLE_UPPER_BOUND'] = 0.5    # MATLAB의 upper bound
+args['NHOOD_SIZE'] = 1                # MATLAB의 nhood (odd number)
+
+# Representative selection parameters (공통)
+args['PEAK_TOL_NM'] = 20.0  # FWHM tolerance for representative selection
+
+
+#================== spectrum.py settings ==================
 # Analysis settings
 args['FIT_RANGE_NM'] = (500, 850)
 args['REP_CRITERION'] = "max_int"  # 대표 픽셀 선택 기준
