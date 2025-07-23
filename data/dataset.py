@@ -19,23 +19,21 @@ class Dataset(object):
         self.labels = None
         self.clusters = None
         self.representatives = None
-        
+
     def run_dataset(self):
         self.load_cube()
 
         bg_mode = self.args.get('BACKGROUND_MODE', 'global')
-        self.preprocess()
-
+        
         if bg_mode == 'global':
-
-            self.preprocess()
+            # MATLAB 방식: flatfield 먼저, 그 다음 background
             self.flatfield()
+            self.preprocess()  # 여기서 MATLAB global background 적용됨
             self.create_dfs_map()
             self.detect_particles_dfs()
             self.select_representatives()
 
         elif bg_mode == 'local':
-
             self.preprocess()
             self.flatfield()
             self.create_dfs_map()
@@ -43,7 +41,6 @@ class Dataset(object):
             self.select_representatives()
 
             if self.representatives:
-
                 print("\n[Step] Applying local background correction...")
                 self.cube = du.apply_local_background(self.args, self.cube, self.clusters, self.representatives)
 
@@ -52,12 +49,14 @@ class Dataset(object):
                 du.save_debug_image(self.args, self.max_map, "dfs_max_map_bg_corrected", cmap = 'hot')
 
                 for rep in self.representatives:
-
                     rep['spectrum'] = self.cube[rep['row'], rep['col'], :]
-
                     peak_idx = np.argmax(rep['spectrum'])
                     rep['peak_wl'] = self.wvl[peak_idx]
                     rep['peak_intensity'] = rep['spectrum'][peak_idx]
+
+        else:
+
+            raise RuntimeError("[error] Not proper background mode: check bg_mode global or local")
 
 
     

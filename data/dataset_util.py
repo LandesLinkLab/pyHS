@@ -7,6 +7,7 @@ from scipy import ndimage as ndi
 from scipy.ndimage import maximum_filter
 from skimage.filters import threshold_otsu
 from skimage.morphology import remove_small_objects, binary_closing, footprint_rectangle
+from skimage.measure import label
 
 from typing import List, Dict, Tuple, Optional, Any, Union
 
@@ -106,67 +107,76 @@ def flatfield_correct(cube: np.ndarray,
                     white_path: str, 
                     dark_path: str) -> np.ndarray:
     """
-    Flatfield correction - MATLAB과 동일한 방식
-    White/Dark의 1340 포인트를 2개씩 평균내어 670 포인트로 변환
+    MATLAB standardreadindark.m과 동일한 flatfield correction
+    Column 방향으로만 평균을 구함
     """
     # Load white and dark references
     w_cube, w_wvl = tdms_to_cube(white_path)
     d_cube, d_wvl = tdms_to_cube(dark_path)
     
+    H_w, W_w, L_w = w_cube.shape
+    H_d, W_d, L_d = d_cube.shape
+    L_sample = len(wvl)
+    
+    print(f"[debug] White shape: {w_cube.shape}, Dark shape: {d_cube.shape}")
     print(f"[debug] Sample wavelengths: {wvl.min():.1f}-{wvl.max():.1f} nm ({len(wvl)} points)")
     print(f"[debug] White wavelengths: {w_wvl.min():.1f}-{w_wvl.max():.1f} nm ({len(w_wvl)} points)")
     
-    H_w, W_w, L_w = w_cube.shape
-    L_sample = len(wvl)
+    # MATLAB: stan = sum(stanim,2)/pcol; % column 방향으로만 평균
+    # Python axis: 0=H(row), 1=W(col), 2=L(wavelength)
+    # MATLAB dim 2 = Python axis 1
     
-    # MATLAB 방식: 2개씩 평균 (1340 -> 670)
+    # Column 방향으로 평균 (각 row와 wavelength에 대해 column들을 평균)
+    stan = w_cube.mean(axis=1, keepdims=True)  # shape: (H, 1, L)
+    dark = d_cube.mean(axis=1, keepdims=True)  # shape: (H, 1, L)
+    
+    # MATLAB: stan = stan - dark
+    stan = stan - dark
+    
+    # 파장 맞추기 (2:1 비율인 경우)
     if L_w == 2 * L_sample:
         print(f"[debug] Using MATLAB-style 2-point averaging (1340 -> 670)")
-        
-        # Reshape and average every 2 points
-        w_cube_avg = w_cube.reshape(H_w, W_w, L_sample, 2).mean(axis=3)
-        d_cube_avg = d_cube.reshape(H_w, W_w, L_sample, 2).mean(axis=3)
-        
-        # 파장도 2개씩 평균
-        w_wvl_avg = w_wvl.reshape(L_sample, 2).mean(axis=1)
-        
-        # 평균된 파장이 샘플 파장과 일치하는지 확인
-        wvl_diff = np.abs(w_wvl_avg - wvl).mean()
-        print(f"[debug] Average wavelength difference after 2-point avg: {wvl_diff:.3f} nm")
-        
-        w_crop = w_cube_avg
-        d_crop = d_cube_avg
-        
+        # 2개씩 평균
+        stan = stan.reshape(H_w, 1, L_sample, 2).mean(axis=3)
     else:
-        # Fallback: nearest neighbor (기존 방식)
+        # Nearest neighbor matching
         print(f"[warning] White/Dark not exactly 2x sample size. Using nearest neighbor matching.")
         idxs = []
         for wl_val in wvl:
             idx = np.argmin(np.abs(w_wvl - wl_val))
             idxs.append(idx)
-        idxs = np.array(idxs)
+        stan = stan[:, :, idxs]
+    
+    print(f"[debug] Stan shape after wavelength matching: {stan.shape}")
+    
+    # Sample cube의 각 row에 맞는 flatfield 선택
+    H_sample, W_sample, L_sample_check = cube.shape
+    
+    if H_sample <= H_w:
+        # 각 row에 해당하는 flatfield 사용
+        corrected = np.zeros_like(cube)
         
-        w_crop = w_cube[:, :, idxs]
-        d_crop = d_cube[:, :, idxs]
-    
-    # Spatial average to get reference spectra
-    w_ref = w_crop.mean(axis=(0, 1))  # (L,)
-    d_ref = d_crop.mean(axis=(0, 1))  # (L,)
-    
-    print(f"[debug] White reference range: [{w_ref.min():.1f}, {w_ref.max():.1f}]")
-    print(f"[debug] Dark reference range: [{d_ref.min():.1f}, {d_ref.max():.1f}]")
-    
-    # Apply correction - MATLAB formula
-    numerator = cube - d_ref[None, None, :]
-    denominator = (w_ref - d_ref)[None, None, :]
-    
-    # Avoid division by zero
-    denominator = np.where(denominator > 0, denominator, 1.0)
-    
-    corrected = numerator / denominator
+        for row in range(H_sample):
+            if row < stan.shape[0]:
+                # 해당 row의 flatfield 값으로 나누기
+                flat_row = stan[row, 0, :]  # (L,)
+                # Division 
+                denominator = np.where(flat_row > 0, flat_row, 1.0)
+                corrected[row, :, :] = cube[row, :, :] / denominator[None, :]
+            else:
+                # Row index가 범위를 벗어나면 마지막 row 사용
+                flat_row = stan[-1, 0, :]
+                denominator = np.where(flat_row > 0, flat_row, 1.0)
+                corrected[row, :, :] = cube[row, :, :] / denominator[None, :]
+    else:
+        print(f"[warning] Sample has more rows ({H_sample}) than flatfield ({H_w})")
+        # Fallback: 전체 평균 사용
+        stan_mean = stan.mean(axis=0, keepdims=True)  # (1, 1, L)
+        denominator = np.where(stan_mean > 0, stan_mean, 1.0)
+        corrected = cube / denominator
     
     # Clip extreme values
-    corrected = np.clip(corrected, 0, 10)  # Reasonable range for corrected data
+    corrected = np.clip(corrected, 0, 10)
     
     print(f"[debug] After flatfield: range [{corrected.min():.3f}, {corrected.max():.3f}]")
     
@@ -175,7 +185,9 @@ def flatfield_correct(cube: np.ndarray,
 def crop_and_bg(args: Dict[str, Any],
                 cube: np.ndarray, 
                 wavelengths: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-
+    """
+    Crop wavelength range and apply background subtraction
+    """
     m = (wavelengths >= args["CROP_RANGE_NM"][0]) & (wavelengths <= args["CROP_RANGE_NM"][1])
     cube = cube[:, :, m]
     wavelengths = wavelengths[m]
@@ -183,13 +195,55 @@ def crop_and_bg(args: Dict[str, Any],
     bg_mode = args.get('BACKGROUND_MODE', 'global')
 
     if bg_mode == 'global':
-
-        percentile = args.get("BACKGROUND_GLOBAL_PERCENTILE", 1) / 100.0\
-
-        if percentile > 0:
-
-            bg = np.quantile(cube, percentile, axis=2, keepdims=True)
-            cube = np.maximum(cube - bg, 0)
+        # MATLAB 방식의 global background
+        backper = args.get('BACKGROUND_PERCENTILE', 0.1)  # 10%
+        
+        H, W, L = cube.shape
+        
+        # 모든 파장에 대한 합
+        sumnorm = cube.sum(axis=2)
+        
+        # Normalize (MATLAB 방식)
+        sumnorm_min = sumnorm.min()
+        sumnorm_range = sumnorm.max() - sumnorm_min
+        if sumnorm_range > 0:
+            sumnorm = (sumnorm - sumnorm_min) / sumnorm_range
+        
+        # 가장 어두운 픽셀들 찾기
+        smln = int(np.ceil(backper * H * W))  # 전체 픽셀의 10%
+        
+        # 모든 픽셀값을 정렬
+        sorted_values = np.sort(sumnorm.ravel())
+        
+        # Cutoff value (하위 10%의 상한값)
+        if smln < len(sorted_values):
+            nthsmlst = sorted_values[smln]
+        else:
+            nthsmlst = sorted_values[-1]
+        
+        # 가장 어두운 픽셀들의 위치 찾기
+        dark_mask = sumnorm <= nthsmlst
+        dark_indices = np.where(dark_mask)
+        
+        # 실제로 사용할 픽셀 수 (정확히 smln개)
+        n_dark = min(len(dark_indices[0]), smln)
+        
+        print(f"[debug] Using {n_dark} darkest pixels ({backper*100:.1f}% of {H*W} total pixels)")
+        
+        # Background spectrum 계산
+        bkavg = np.zeros(L)
+        for i in range(n_dark):
+            row = dark_indices[0][i]
+            col = dark_indices[1][i]
+            bkavg += cube[row, col, :]
+        
+        bkavg = bkavg / n_dark  # 평균
+        
+        print(f"[debug] Background range: [{bkavg.min():.2f}, {bkavg.max():.2f}]")
+        
+        # Background subtraction
+        cube = cube - bkavg[None, None, :]
+        cube = np.maximum(cube, 0)  # No negative values
 
     return cube.astype(np.float32), wavelengths
 
@@ -280,103 +334,101 @@ def create_dfs_max_intensity_map(cube, wavelengths, wl_range=(500, 800)):
 
 def detect_dfs_particles(max_map, args):
     """
-    Detect particle clusters from DFS max intensity map
-    Enhanced version for low contrast data
+    DFS용 wrapper - RGB 이미지 생성 후 MATLAB 방식 적용
     """
-    # Check if map has valid data
-    if max_map.max() <= max_map.min():
-        print("[warning] Max map has no contrast")
-        # Try to use raw values without normalization
-        mask = max_map > np.percentile(max_map, 90)  # Top 10% of values
-    else:
-        # Normalize for thresholding
-        normalized = (max_map - max_map.min()) / (max_map.max() - max_map.min())
+    # DFS max map을 RGB-like 형태로 변환
+    # MATLAB의 specrgbnorm처럼 3채널로 만들기
+    normalized = (max_map - max_map.min()) / (max_map.max() - max_map.min() + 1e-10)
+    
+    # 3채널 RGB image 생성 (grayscale을 3채널로 복제)
+    rgb_image = np.stack([normalized, normalized, normalized], axis=2)
+    
+    # MATLAB 방식으로 detection
+    return detect_particles_matlab_style(rgb_image, args)
+
+def detect_particles_matlab_style(rgb_image, args):
+    """
+    MATLAB partident.m과 동일한 방식의 particle detection
+    다중 threshold를 시도하며 개별 픽셀을 찾는 방식
+    """
+    # Parameters from MATLAB
+    lower = args.get('PARTICLE_LOWER_BOUND', 0)
+    upper = args.get('PARTICLE_UPPER_BOUND', 0.5)
+    nhood = args.get('NHOOD_SIZE', 1)  # odd number
+    
+    # RGB to grayscale (sum of all channels)
+    srgb = rgb_image.sum(axis=2)
+    H, W = srgb.shape
+    
+    # Create mask to exclude edges (MATLAB의 picture frame)
+    half_nhood = (nhood - 1) // 2
+    mask = np.zeros((H, W), dtype=bool)
+    mask[half_nhood:H-half_nhood, half_nhood:W-half_nhood] = True
+    
+    # Collect unique points from all thresholds
+    pts = []
+    
+    # MATLAB: for i=lower:0.001:upper
+    thresholds = np.arange(lower, upper + 0.001, 0.001)
+    
+    print(f"[debug] Testing {len(thresholds)} thresholds from {lower} to {upper}")
+    
+    for thresh_idx, thresh in enumerate(thresholds):
+        # Binary thresholding
+        rbs = (rgb_image > thresh).any(axis=2)  # any channel > threshold
         
-        # Adaptive threshold based on data distribution
-        threshold = args.get('DFS_INTENSITY_THRESHOLD', 0.1)
+        # Clear border and apply mask
+        rbs = ndi.binary_fill_holes(rbs)
+        rbs[~mask] = False
         
-        # Try Otsu if manual threshold fails
+        # Find connected components
+        labeled, num_features = label(rbs, return_num=True)
         
-        try:
-            otsu_val = threshold_otsu(normalized)
-            print(f"[debug] Otsu threshold on normalized data: {otsu_val:.3f}")
-            # Use lower of manual and Otsu
-            threshold = min(threshold, otsu_val * 0.8)  # 80% of Otsu to be more inclusive
-        except:
-            pass
+        if num_features > 0:
+            # Get component sizes
+            sizes = np.bincount(labeled.ravel())[1:]  # exclude background (0)
+            
+            # MATLAB logic: remove largest component until only single pixels remain
+            while sizes.max() > 1:
+                # Remove the largest component
+                largest_label = np.argmax(sizes) + 1
+                rbs[labeled == largest_label] = False
+                
+                # Re-label
+                labeled, num_features = label(rbs, return_num=True)
+                if num_features == 0:
+                    break
+                sizes = np.bincount(labeled.ravel())[1:]
+            
+            # Collect remaining single pixels
+            single_pixels = np.where(rbs)
+            if len(single_pixels[0]) > 0:
+                pts.extend(zip(single_pixels[0], single_pixels[1]))
         
-        mask = normalized > threshold
-        print(f"[debug] Using threshold: {threshold}")
+        if thresh_idx % 100 == 0:
+            print(f"  Processed threshold {thresh:.3f}: found {len(pts)} points so far")
     
-    print(f"[debug] Pixels above threshold: {mask.sum()}")
+    # Remove duplicates (MATLAB: ptu=unique(pts))
+    unique_pts = list(set(pts))
+    print(f"[debug] Total unique points found: {len(unique_pts)}")
     
-    # If too few pixels, lower threshold
-    if mask.sum() < 50:  # Less than 50 pixels
-        print("[warning] Too few pixels detected, lowering threshold")
-        percentile_threshold = 80  # Top 20% of pixels
-        threshold_value = np.percentile(max_map, percentile_threshold)
-        mask = max_map > threshold_value
-        print(f"[debug] Using percentile {percentile_threshold}: {mask.sum()} pixels above threshold")
-    
-    # Morphological operations
-    
-    mask = binary_closing(mask, footprint_rectangle((3, 3)))
-    
-    # For initial detection, use smaller minimum size
-    min_size = max(2, args.get("MIN_PIXELS_CLUS", 4) // 2)
-    mask = remove_small_objects(mask, min_size)
-    
-    # Label connected components
-    
-    labels, num = ndi.label(mask)
-    
-    print(f"[info] Found {num} particle clusters (min size: {min_size} pixels)")
-    
-    # Get cluster info
+    # Convert to clusters format for compatibility
     clusters = []
-    for i in range(1, num + 1):
-        coords = np.argwhere(labels == i)
-        size = len(coords)
-        
-        # Apply original size filter here
-        if size >= args.get("MIN_PIXELS_CLUS", 4):
-            clusters.append({
-                'label': i,
-                'coords': coords,
-                'size': size,
-                'center': coords.mean(axis=0),
-                'max_intensity': max_map[coords[:, 0], coords[:, 1]].max(),
-                'mean_intensity': max_map[coords[:, 0], coords[:, 1]].mean()
-            })
-            print(f"  Cluster {i}: {size} pixels, center at ({coords.mean(axis=0)[0]:.1f}, {coords.mean(axis=0)[1]:.1f}), "
-                  f"max_int={max_map[coords[:, 0], coords[:, 1]].max():.2f}")
-        else:
-            print(f"  Cluster {i}: {size} pixels (skipped - too small)")
+    labels = np.zeros((H, W), dtype=int)
     
-    # If no clusters found, try to find peaks
-    if len(clusters) == 0:
-        print("[warning] No clusters found, trying peak detection")
-        
-        
-        # Find local maxima
-        local_max = maximum_filter(max_map, size=5)
-        peaks = (max_map == local_max) & (max_map > np.percentile(max_map, 90))
-        peak_coords = np.argwhere(peaks)
-        
-        print(f"[debug] Found {len(peak_coords)} peaks")
-        
-        # Create clusters from peaks
-        for i, (row, col) in enumerate(peak_coords[:20]):  # Limit to 20 peaks
-            clusters.append({
-                'label': i + 1,
-                'coords': np.array([[row, col]]),
-                'size': 1,
-                'center': np.array([row, col]),
-                'max_intensity': max_map[row, col],
-                'mean_intensity': max_map[row, col]
-            })
+    for i, (row, col) in enumerate(unique_pts):
+        clusters.append({
+            'label': i + 1,
+            'coords': np.array([[row, col]]),
+            'size': 1,
+            'center': np.array([row, col]),
+            'max_intensity': srgb[row, col],
+            'mean_intensity': srgb[row, col]
+        })
+        labels[row, col] = i + 1
     
-    print(f"[info] Returning {len(clusters)} valid clusters")
+    print(f"[info] MATLAB-style detection found {len(clusters)} particles")
+    
     return labels, clusters
 
 def select_representative_spectra(cube, wavelengths, clusters, args):

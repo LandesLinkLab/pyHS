@@ -20,14 +20,19 @@ args['DFS_INTENSITY_THRESHOLD'] = 0.05  # 낮춰서 더 많은 파티클 검출
 # TDMS 파일의 전체 범위가 388-897nm이므로, 500-850nm로 crop
 args['CROP_RANGE_NM'] = (500, 850)  
 
-args['BACKGROUND_MODE'] = 'global' # 'global' or 'local'
+# Background mode - MATLAB 방식으로 구현된 global 사용
+args['BACKGROUND_MODE'] = 'global'  # 'global' (MATLAB style), 'local'
+args['BACKGROUND_GLOBAL_PERCENTILE'] = 0.1  # MATLAB의 10%
 args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20 
 args['BACKGROUND_LOCAL_PERCENTILE'] = 1
-args['BACKGROUND_GLOBAL_PERCENTILE'] = 1 # option for global
 
 args['SKIP_FLATFIELD'] = False  # Flatfield 사용
 
-# Particle detection
+# Particle detection - MATLAB style
+args['PARTICLE_LOWER_BOUND'] = 0      # MATLAB의 lower
+args['PARTICLE_UPPER_BOUND'] = 0.5    # MATLAB의 upper  
+args['NHOOD_SIZE'] = 1                # MATLAB의 nhood
+
 args['MIN_PIXELS_CLUS'] = 3  # 최소 클러스터 크기 (더 작게)
 args['PEAK_TOL_NM'] = 20.0  # FWHM tolerance
 
