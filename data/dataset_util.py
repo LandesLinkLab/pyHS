@@ -577,24 +577,120 @@ def save_debug_image(args, img, name, cmap='hot'):
     plt.close()
 
 def save_debug_dfs_detection(args, max_map, labels, clusters):
-       
+    """Save debug images for particle detection results"""
     out_dir = Path(args['OUTPUT_DIR']) / "debug"
     out_dir.mkdir(parents=True, exist_ok=True)
     
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+    # Detection style에 따라 다른 시각화
+    detection_style = args.get('PARTICLE_DETECTION_STYLE', 'python')
+    
+    if detection_style == 'python':
+        # Python 방식: Otsu threshold 과정 시각화
+        save_debug_python_detection(args, max_map, labels, clusters, out_dir)
+    else:
+        # MATLAB 방식: 간단한 결과만
+        save_debug_matlab_detection(args, max_map, labels, clusters, out_dir)
+
+def save_debug_python_detection(args, max_map, labels, clusters, out_dir):
+    """Python 방식 detection의 상세 시각화"""
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    axes = axes.ravel()
+    
+    # 1. Original max intensity map
+    im1 = axes[0].imshow(max_map, cmap='hot', origin='lower')
+    axes[0].set_title('1. Max Intensity Map')
+    plt.colorbar(im1, ax=axes[0])
+    
+    # 2. Normalized map
+    normalized = (max_map - max_map.min()) / (max_map.max() - max_map.min() + 1e-10)
+    im2 = axes[1].imshow(normalized, cmap='hot', origin='lower')
+    axes[1].set_title('2. Normalized Map')
+    plt.colorbar(im2, ax=axes[1])
+    
+    # 3. Otsu threshold visualization
+    threshold = args.get('DFS_INTENSITY_THRESHOLD', 0.1)
+    try:
+        from skimage.filters import threshold_otsu
+        otsu_val = threshold_otsu(normalized)
+        actual_threshold = min(threshold, otsu_val * 0.8)
+        
+        # Histogram with thresholds
+        axes[2].hist(normalized.ravel(), bins=100, alpha=0.7, color='blue')
+        axes[2].axvline(actual_threshold, color='red', linestyle='--', linewidth=2, label=f'Used: {actual_threshold:.3f}')
+        axes[2].axvline(otsu_val, color='green', linestyle='--', linewidth=2, label=f'Otsu: {otsu_val:.3f}')
+        axes[2].axvline(threshold, color='orange', linestyle='--', linewidth=2, label=f'Manual: {threshold:.3f}')
+        axes[2].set_title('3. Histogram with Thresholds')
+        axes[2].set_xlabel('Normalized Intensity')
+        axes[2].set_ylabel('Count')
+        axes[2].legend()
+        axes[2].set_yscale('log')
+    except:
+        actual_threshold = threshold
+        axes[2].text(0.5, 0.5, 'Otsu failed', ha='center', va='center', transform=axes[2].transAxes)
+        axes[2].set_title('3. Histogram (Otsu failed)')
+    
+    # 4. Binary mask after threshold
+    mask = normalized > actual_threshold
+    axes[3].imshow(mask, cmap='gray', origin='lower')
+    axes[3].set_title(f'4. Binary Mask (threshold={actual_threshold:.3f})')
+    pixels_above = mask.sum()
+    axes[3].text(0.02, 0.98, f'Pixels: {pixels_above}', transform=axes[3].transAxes, 
+                verticalalignment='top', color='yellow', fontsize=10)
+    
+    # 5. After morphological operations
+    from skimage.morphology import binary_closing, remove_small_objects, footprint_rectangle
+    mask_morph = binary_closing(mask, footprint_rectangle((3, 3)))
+    min_size = max(2, args.get("MIN_PIXELS_CLUS", 4) // 2)
+    mask_morph = remove_small_objects(mask_morph, min_size)
+    axes[4].imshow(mask_morph, cmap='gray', origin='lower')
+    axes[4].set_title(f'5. After Morphology (min_size={min_size})')
+    
+    # 6. Final labeled clusters
+    im6 = axes[5].imshow(labels, cmap='tab20', origin='lower')
+    axes[5].set_title(f'6. Final Clusters (n={len(clusters)})')
+    
+    # Mark cluster centers and info
+    for cluster in clusters:
+        center = cluster['center']
+        axes[5].plot(center[1], center[0], 'w+', markersize=10, markeredgewidth=2)
+        axes[5].text(center[1]+2, center[0]+2, f"{cluster['label']}\n{cluster['size']}px", 
+                    color='white', fontsize=8, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
+    
+    # Add grid to all subplots
+    for ax in axes:
+        ax.set_xlabel('X (pixels)')
+        ax.set_ylabel('Y (pixels)')
+        ax.grid(True, alpha=0.3, linestyle='--')
+    
+    plt.suptitle(f'Python-style Particle Detection Debug - {args["SAMPLE_NAME"]}', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_python_detection_debug.png", dpi=150)
+    plt.close()
+
+def save_debug_matlab_detection(args, max_map, labels, clusters, out_dir):
+    """MATLAB 방식 detection의 간단한 시각화"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
     
     # 1. Max intensity map
     im1 = ax1.imshow(max_map, cmap='hot', origin='lower')
-    ax1.set_title('Max Intensity Map (500-800nm)')
+    ax1.set_title('Max Intensity Map')
     plt.colorbar(im1, ax=ax1)
     
-    # 2. Binary mask (threshold 적용 후)
-    threshold = args.get('DFS_INTENSITY_THRESHOLD', 0.1)
-    normalized = (max_map - max_map.min()) / (max_map.max() - max_map.min())
-    mask = normalized > threshold
-    ax2.imshow(mask, cmap='gray', origin='lower')
-    ax2.set_title(f'Binary Mask (threshold={threshold})')
+    # 2. Detected particles
+    ax2.imshow(labels, cmap='tab20', origin='lower')
+    ax2.set_title(f'MATLAB-style Detection (n={len(clusters)} particles)')
     
-    # 3. Labeled clusters
-    ax3.imshow(labels, cmap='tab20', origin='lower')
-    ax3.set_title(f'Detected Clusters (n={len(clusters)})')
+    # Mark particles
+    for cluster in clusters:
+        center = cluster['center']
+        ax2.plot(center[1], center[0], 'w+', markersize=8, markeredgewidth=1)
+    
+    for ax in [ax1, ax2]:
+        ax.set_xlabel('X (pixels)')
+        ax.set_ylabel('Y (pixels)')
+        ax.grid(True, alpha=0.3, linestyle='--')
+    
+    plt.tight_layout()
+    plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_matlab_detection.png", dpi=150)
+    plt.close()

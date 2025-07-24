@@ -9,10 +9,10 @@ args['SAMPLE_NAME'] = 'AuNR_PMMA'
 args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw')
 args['WHITE_FILE'] = "wc.tdms"
 args['DARK_FILE'] = "dc.tdms"
-args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS")
+args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_matlab_global")
 
 # DFS-specific settings
-args['DFS_WL_RANGE'] = (600, 850)  # DFS max intensity map을 위한 범위
+args['DFS_WL_RANGE'] = (500, 850)  # DFS max intensity map을 위한 범위
 args['DFS_INTENSITY_THRESHOLD'] = 0.05  # Python 방식 particle detection threshold
 
 # Preprocessing
@@ -25,11 +25,11 @@ args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20
 args['BACKGROUND_LOCAL_PERCENTILE'] = 1
 
 # Particle detection style
-args['PARTICLE_DETECTION_STYLE'] = 'python'  # 'python' or 'matlab'
+args['PARTICLE_DETECTION_STYLE'] = 'matlab'  # 'python' or 'matlab'
 
 # Python style detection parameters
-args['DFS_INTENSITY_THRESHOLD'] = 0.05  # Threshold for Python style
-args['MIN_PIXELS_CLUS'] = 3  # 최소 클러스터 크기 (Python & MATLAB 공통)
+args['DFS_INTENSITY_THRESHOLD'] = 0.01  # Threshold for Python style
+args['MIN_PIXELS_CLUS'] = 1  # 최소 클러스터 크기 (Python & MATLAB 공통)
 
 # MATLAB style detection parameters  
 args['PARTICLE_LOWER_BOUND'] = 0      # MATLAB의 lower bound
@@ -37,12 +37,8 @@ args['PARTICLE_UPPER_BOUND'] = 0.5    # MATLAB의 upper bound
 args['NHOOD_SIZE'] = 1                # MATLAB의 nhood (odd number)
 
 # Representative selection parameters (공통)
-args['PEAK_TOL_NM'] = 20.0  # FWHM tolerance for representative selection
-
-# Analysis settings
+args['PEAK_TOL_NM'] = 10.0  # FWHM tolerance for representative selection
 args['FIT_RANGE_NM'] = (500, 850)  # Lorentzian fitting range
-
-# Output settings
 args['FIG_DPI'] = 300
 args['RSQ_MIN'] = 0.90
 
