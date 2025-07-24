@@ -5,21 +5,33 @@ import argparse
 import pickle as pkl
 from typing import List, Dict, Tuple, Set, Union, Optional, Any, Callable, TextIO
 
-# from config import config as config
 from data.dataset import Dataset
 from spectrum.spectrum import SpectrumAnalyzer
+from logger import setup_logger, close_logger
 
 
 def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
+    
+    logger = setup_logger(args['OUTPUT_DIR'])
+    
+    try:
 
-    dataset = Dataset(args)
-    dataset.run_dataset()
+        print(f"[info] Starting analysis for {args['SAMPLE_NAME']}")
+        print(f"[info] Output directory: {args['OUTPUT_DIR']}")
+        print(f"[info] Data directory: {args['DATA_DIR']}")
+        print("")
+        
+        dataset = Dataset(args)
+        dataset.run_dataset()
 
-    spectrum_analysis = SpectrumAnalyzer(args, dataset)
-    spectrum_analysis.run_spectrum()
+        spectrum_analysis = SpectrumAnalyzer(args, dataset)
+        spectrum_analysis.run_spectrum()
 
+        print(f"\n[info] Completed  ▶  outputs saved in {args['OUTPUT_DIR']}")
+        
+    finally:
 
-    print(f"[info] Completed  ▶  outputs saved in {args['OUTPUT_DIR']}")
+        close_logger()
 
 
 if __name__ == "__main__":

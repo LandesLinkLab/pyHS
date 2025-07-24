@@ -4,7 +4,6 @@ from pathlib import Path
 home = str(Path.home())
 args = dict()
 
-#================== dataset.py settings ==================
 # Basic settings
 args['SAMPLE_NAME'] = 'AuNR_PMMA'
 args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw')
@@ -25,8 +24,6 @@ args['BACKGROUND_PERCENTILE'] = 0.1  # MATLAB의 10%
 args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20 
 args['BACKGROUND_LOCAL_PERCENTILE'] = 1
 
-
-#================== dataset.py settings ==================
 # Particle detection style
 args['PARTICLE_DETECTION_STYLE'] = 'python'  # 'python' or 'matlab'
 
@@ -42,19 +39,14 @@ args['NHOOD_SIZE'] = 1                # MATLAB의 nhood (odd number)
 # Representative selection parameters (공통)
 args['PEAK_TOL_NM'] = 20.0  # FWHM tolerance for representative selection
 
-
-#================== spectrum.py settings ==================
 # Analysis settings
-args['FIT_RANGE_NM'] = (500, 850)
-args['REP_CRITERION'] = "max_int"  # 대표 픽셀 선택 기준
-args['INTEGRATION_SIZE'] = 3  # 스펙트럼 추출 시 통합 크기
-args['BACKGROUND_OFFSET'] = 7  # 배경 추출 오프셋
+args['FIT_RANGE_NM'] = (500, 850)  # Lorentzian fitting range
 
 # Output settings
 args['FIG_DPI'] = 300
 args['RSQ_MIN'] = 0.90
 
-# Manual mode
+# Manual mode (currently not used in new workflow)
 args['USE_MANUAL_COORDS'] = False
 args['MANUAL_COORDS'] = [
 (10, 50), 

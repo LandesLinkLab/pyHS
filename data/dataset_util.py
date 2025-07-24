@@ -101,14 +101,27 @@ def tdms_to_cube(path: str,
     
     return cube.astype(np.float32), wl.astype(np.float32)
 
-# ------------------- Remaining helpers ----------------------------
+def crop_wavelength(cube: np.ndarray, wavelengths: np.ndarray, wl_range: Tuple[float, float]) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Crop wavelength range
+    """
+    m = (wavelengths >= wl_range[0]) & (wavelengths <= wl_range[1])
+    cube_cropped = cube[:, :, m]
+    wavelengths_cropped = wavelengths[m]
+    
+    print(f"[debug] Wavelength cropped: {wavelengths.min():.1f}-{wavelengths.max():.1f} nm -> "
+          f"{wavelengths_cropped.min():.1f}-{wavelengths_cropped.max():.1f} nm")
+    
+    return cube_cropped, wavelengths_cropped
+
 def flatfield_correct(cube: np.ndarray, 
                     wvl: np.ndarray, 
                     white_path: str, 
-                    dark_path: str) -> np.ndarray:
+                    dark_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     MATLAB standardreadindark.m과 동일한 flatfield correction
     Column 방향으로만 평균을 구함
+    Returns: corrected_cube, white_ref, dark_ref (나중에 background correction에 사용)
     """
     # Load white and dark references
     w_cube, w_wvl = tdms_to_cube(white_path)
@@ -138,6 +151,7 @@ def flatfield_correct(cube: np.ndarray,
         print(f"[debug] Using MATLAB-style 2-point averaging (1340 -> 670)")
         # 2개씩 평균
         stan = stan.reshape(H_w, 1, L_sample, 2).mean(axis=3)
+        dark = dark.reshape(H_d, 1, L_sample, 2).mean(axis=3)
     else:
         # Nearest neighbor matching
         print(f"[warning] White/Dark not exactly 2x sample size. Using nearest neighbor matching.")
@@ -146,6 +160,7 @@ def flatfield_correct(cube: np.ndarray,
             idx = np.argmin(np.abs(w_wvl - wl_val))
             idxs.append(idx)
         stan = stan[:, :, idxs]
+        dark = dark[:, :, idxs]
     
     print(f"[debug] Stan shape after wavelength matching: {stan.shape}")
     
@@ -180,136 +195,8 @@ def flatfield_correct(cube: np.ndarray,
     
     print(f"[debug] After flatfield: range [{corrected.min():.3f}, {corrected.max():.3f}]")
     
-    return corrected
-
-def crop_and_bg(args: Dict[str, Any],
-                cube: np.ndarray, 
-                wavelengths: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Crop wavelength range and apply background subtraction
-    """
-    m = (wavelengths >= args["CROP_RANGE_NM"][0]) & (wavelengths <= args["CROP_RANGE_NM"][1])
-    cube = cube[:, :, m]
-    wavelengths = wavelengths[m]
-
-    bg_mode = args.get('BACKGROUND_MODE', 'global')
-
-    if bg_mode == 'global':
-        # MATLAB 방식의 global background
-        backper = args.get('BACKGROUND_PERCENTILE', 0.1)  # 10%
-        
-        H, W, L = cube.shape
-        
-        # 모든 파장에 대한 합
-        sumnorm = cube.sum(axis=2)
-        
-        # Normalize (MATLAB 방식)
-        sumnorm_min = sumnorm.min()
-        sumnorm_range = sumnorm.max() - sumnorm_min
-        if sumnorm_range > 0:
-            sumnorm = (sumnorm - sumnorm_min) / sumnorm_range
-        
-        # 가장 어두운 픽셀들 찾기
-        smln = int(np.ceil(backper * H * W))  # 전체 픽셀의 10%
-        
-        # 모든 픽셀값을 정렬
-        sorted_values = np.sort(sumnorm.ravel())
-        
-        # Cutoff value (하위 10%의 상한값)
-        if smln < len(sorted_values):
-            nthsmlst = sorted_values[smln]
-        else:
-            nthsmlst = sorted_values[-1]
-        
-        # 가장 어두운 픽셀들의 위치 찾기
-        dark_mask = sumnorm <= nthsmlst
-        dark_indices = np.where(dark_mask)
-        
-        # 실제로 사용할 픽셀 수 (정확히 smln개)
-        n_dark = min(len(dark_indices[0]), smln)
-        
-        print(f"[debug] Using {n_dark} darkest pixels ({backper*100:.1f}% of {H*W} total pixels)")
-        
-        # Background spectrum 계산
-        bkavg = np.zeros(L)
-        for i in range(n_dark):
-            row = dark_indices[0][i]
-            col = dark_indices[1][i]
-            bkavg += cube[row, col, :]
-        
-        bkavg = bkavg / n_dark  # 평균
-        
-        print(f"[debug] Background range: [{bkavg.min():.2f}, {bkavg.max():.2f}]")
-        
-        # Background subtraction
-        cube = cube - bkavg[None, None, :]
-        cube = np.maximum(cube, 0)  # No negative values
-
-    return cube.astype(np.float32), wavelengths
-
-def apply_local_background(args, cube, clusters, representatives):
-    """
-    Local background correction
-    각 클러스터 주변에서 가장 어두운 영역을 background로 사용
-    """
-    print(f"\n[debug] Applying local background correction")
-    
-    H, W, L = cube.shape
-    corrected = cube.copy()
-    
-    # 각 대표 픽셀에 대해 local background 적용
-    for i, rep in enumerate(representatives):
-        row, col = rep['row'], rep['col']
-        cluster = next(c for c in clusters if c['label'] == rep['label'])
-        
-        # Local background region 찾기
-        search_radius = args.get('BACKGROUND_LOCAL_SEARCH_RADIUS', 20)
-        percentile = args.get('BACKGROUND_LOCAL_PERCENTILE', 1)
-        
-        # 검색 영역 정의 (클러스터 주변)
-        row_min = max(0, row - search_radius)
-        row_max = min(H, row + search_radius)
-        col_min = max(0, col - search_radius)
-        col_max = min(W, col + search_radius)
-        
-        # 검색 영역에서 intensity sum이 낮은 픽셀들 찾기
-        search_region = cube[row_min:row_max, col_min:col_max, :]
-        intensity_map = search_region.sum(axis=2)
-        
-        # 클러스터 픽셀은 제외
-        mask = np.ones(intensity_map.shape, dtype=bool)
-        for coord in cluster['coords']:
-            local_r = coord[0] - row_min
-            local_c = coord[1] - col_min
-            if 0 <= local_r < mask.shape[0] and 0 <= local_c < mask.shape[1]:
-                mask[local_r, local_c] = False
-        
-        # 가장 어두운 픽셀들 선택
-        masked_intensity = intensity_map[mask]
-        if len(masked_intensity) > 0:
-            threshold = np.percentile(masked_intensity, percentile)
-            dark_pixels = np.where((intensity_map <= threshold) & mask)
-            
-            if len(dark_pixels[0]) > 0:
-                # Local background spectrum 계산
-                background_spectra = search_region[dark_pixels[0], dark_pixels[1], :]
-                local_bg = background_spectra.mean(axis=0)
-                
-                print(f"  Cluster {i}: Using {len(dark_pixels[0])} pixels for local background")
-                print(f"    Background range: [{local_bg.min():.1f}, {local_bg.max():.1f}]")
-                
-                # 클러스터의 모든 픽셀에 local background subtraction 적용
-                for coord in cluster['coords']:
-                    r, c = coord
-                    corrected[r, c, :] = np.maximum(cube[r, c, :] - local_bg, 0)
-            else:
-                print(f"  Cluster {i}: No suitable background pixels nearby")
-        else:
-            print(f"  Cluster {i}: No valid pixels in search region")
-    
-    print(f"[debug] After local background correction: range [{corrected.min():.3f}, {corrected.max():.3f}]")
-    
-    return corrected
+    # Return corrected cube and references for later use
+    return corrected, stan, dark
 
 def create_dfs_max_intensity_map(cube, wavelengths, wl_range=(500, 800)):
     """
@@ -526,125 +413,146 @@ def detect_particles_matlab_style(rgb_image, args):
     
     return labels, clusters
 
-def select_representative_spectra(cube, wavelengths, clusters, args):
+def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref):
     """
-    각 클러스터에서 대표 스펙트럼 선택
-    - 가장 높은 intensity를 가진 픽셀 선택
-    - FWHM tolerance 체크
-    """
-    representatives = []
+    Apply background correction to cube
+    I_corr = {S_raw(λ) / (W(λ) - D(λ))} - {B(λ) / (W(λ) - D(λ))}
     
+    Note: cube는 이미 flatfield corrected 상태 {S_raw(λ) / (W(λ) - D(λ))}
+    """
+    bg_mode = args.get('BACKGROUND_MODE', 'global')
+    
+    if bg_mode == 'global':
+        # MATLAB 방식의 global background
+        corrected = apply_global_background_matlab(cube, wvl, args, white_ref, dark_ref)
+    else:
+        # Local background
+        corrected = apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref)
+    
+    return corrected
+
+def apply_global_background_matlab(cube, wvl, args, white_ref, dark_ref):
+    """
+    MATLAB anfunc_lorentz_fit.m과 동일한 global background subtraction
+    전체 이미지에서 가장 어두운 픽셀들을 찾아 background로 사용
+    """
+    # Parameters
+    backper = args.get('BACKGROUND_PERCENTILE', 0.1)  # 10%
+    
+    H, W, L = cube.shape
+    
+    # 모든 파장에 대한 합 (이미 flatfield corrected)
+    sumnorm = cube.sum(axis=2)
+    
+    # Normalize (MATLAB 방식)
+    sumnorm_min = sumnorm.min()
+    sumnorm_range = sumnorm.max() - sumnorm_min
+    if sumnorm_range > 0:
+        sumnorm = (sumnorm - sumnorm_min) / sumnorm_range
+    
+    # 가장 어두운 픽셀들 찾기
+    smln = int(np.ceil(backper * H * W))  # 전체 픽셀의 10%
+    
+    # 모든 픽셀값을 정렬
+    sorted_values = np.sort(sumnorm.ravel())
+    
+    # Cutoff value (하위 10%의 상한값)
+    if smln < len(sorted_values):
+        nthsmlst = sorted_values[smln]
+    else:
+        nthsmlst = sorted_values[-1]
+    
+    # 가장 어두운 픽셀들의 위치 찾기
+    dark_mask = sumnorm <= nthsmlst
+    dark_indices = np.where(dark_mask)
+    
+    # 실제로 사용할 픽셀 수 (정확히 smln개)
+    n_dark = min(len(dark_indices[0]), smln)
+    
+    print(f"[debug] Using {n_dark} darkest pixels ({backper*100:.1f}% of {H*W} total pixels)")
+    
+    # Background spectrum 계산 (이미 flatfield corrected된 상태)
+    bkavg = np.zeros(L)
+    for i in range(n_dark):
+        row = dark_indices[0][i]
+        col = dark_indices[1][i]
+        bkavg += cube[row, col, :]  # 이미 {B(λ) / (W(λ) - D(λ))} 형태
+    
+    bkavg = bkavg / n_dark  # 평균
+    
+    print(f"[debug] Background range: [{bkavg.min():.2f}, {bkavg.max():.2f}]")
+    
+    # Background subtraction
+    # cube는 이미 {S_raw(λ) / (W(λ) - D(λ))}, bkavg는 {B(λ) / (W(λ) - D(λ))}
+    corrected = cube - bkavg[None, None, :]
+    corrected = np.maximum(corrected, 0)  # No negative values
+    
+    return corrected
+
+def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref):
+    """
+    Local background correction
+    각 클러스터 주변에서 가장 어두운 영역을 background로 사용
+    """
+    print(f"\n[debug] Applying local background correction")
+    
+    H, W, L = cube.shape
+    corrected = cube.copy()
+    
+    # 각 클러스터에 대해 local background 적용
     for cluster in clusters:
         coords = cluster['coords']
-        label = cluster['label']
+        center = cluster['center']
         
-        print(f"\n[Processing Cluster {label}]")
+        # Local background region 찾기
+        search_radius = args.get('BACKGROUND_LOCAL_SEARCH_RADIUS', 20)
+        percentile = args.get('BACKGROUND_LOCAL_PERCENTILE', 1)
         
-        # 모든 픽셀의 스펙트럼과 특성 추출
-        spectra_info = []
-        for idx, (row, col) in enumerate(coords):
-            spectrum = cube[row, col, :]
+        # 검색 영역 정의 (클러스터 중심 주변)
+        row_center, col_center = int(center[0]), int(center[1])
+        row_min = max(0, row_center - search_radius)
+        row_max = min(H, row_center + search_radius)
+        col_min = max(0, col_center - search_radius)
+        col_max = min(W, col_center + search_radius)
+        
+        # 검색 영역에서 intensity sum이 낮은 픽셀들 찾기
+        search_region = cube[row_min:row_max, col_min:col_max, :]
+        intensity_map = search_region.sum(axis=2)
+        
+        # 클러스터 픽셀은 제외
+        mask = np.ones(intensity_map.shape, dtype=bool)
+        for coord in coords:
+            local_r = coord[0] - row_min
+            local_c = coord[1] - col_min
+            if 0 <= local_r < mask.shape[0] and 0 <= local_c < mask.shape[1]:
+                mask[local_r, local_c] = False
+        
+        # 가장 어두운 픽셀들 선택
+        masked_intensity = intensity_map[mask]
+        if len(masked_intensity) > 0:
+            threshold = np.percentile(masked_intensity, percentile)
+            dark_pixels = np.where((intensity_map <= threshold) & mask)
             
-            # Peak 찾기
-            peak_idx = np.argmax(spectrum)
-            peak_wl = wavelengths[peak_idx]
-            peak_intensity = spectrum[peak_idx]
-            
-            # 간단한 FWHM 추정
-            half_max = peak_intensity / 2
-            above_half = np.where(spectrum > half_max)[0]
-            if len(above_half) > 1:
-                fwhm = wavelengths[above_half[-1]] - wavelengths[above_half[0]]
+            if len(dark_pixels[0]) > 0:
+                # Local background spectrum 계산 (이미 flatfield corrected)
+                background_spectra = search_region[dark_pixels[0], dark_pixels[1], :]
+                local_bg = background_spectra.mean(axis=0)  # {B(λ) / (W(λ) - D(λ))}
+                
+                print(f"  Cluster {cluster['label']}: Using {len(dark_pixels[0])} pixels for local background")
+                print(f"    Background range: [{local_bg.min():.1f}, {local_bg.max():.1f}]")
+                
+                # 클러스터의 모든 픽셀에 local background subtraction 적용
+                for coord in coords:
+                    r, c = coord
+                    corrected[r, c, :] = np.maximum(cube[r, c, :] - local_bg, 0)
             else:
-                fwhm = 0
-            
-            spectra_info.append({
-                'idx': idx,
-                'row': row,
-                'col': col,
-                'spectrum': spectrum,
-                'peak_wl': peak_wl,
-                'peak_intensity': peak_intensity,
-                'fwhm': fwhm,
-                'integrated_intensity': spectrum.sum()
-            })
-        
-        # FWHM tolerance 체크
-        fwhms = [s['fwhm'] for s in spectra_info if s['fwhm'] > 0]
-        if len(fwhms) > 1:
-            fwhm_std = np.std(fwhms)
-            fwhm_mean = np.mean(fwhms)
-            print(f"  FWHM: {fwhm_mean:.1f} ± {fwhm_std:.1f} nm")
-            
-            if fwhm_std > args['PEAK_TOL_NM']:
-                print(f"  [Skipped] FWHM variation ({fwhm_std:.1f}) > tolerance ({args['PEAK_TOL_NM']})")
-                continue
-        
-        # 가장 높은 intensity를 가진 픽셀 선택
-        best_idx = max(range(len(spectra_info)), 
-                      key=lambda i: spectra_info[i]['peak_intensity'])
-        best = spectra_info[best_idx]
-        
-        print(f"  Selected pixel ({best['row']}, {best['col']})")
-        print(f"  - Peak: {best['peak_wl']:.1f} nm @ {best['peak_intensity']:.1f}")
-        print(f"  - FWHM: {best['fwhm']:.1f} nm")
-        
-        representatives.append({
-            'label': label,
-            'row': best['row'],
-            'col': best['col'],
-            'spectrum': best['spectrum'],
-            'peak_wl': best['peak_wl'],
-            'peak_intensity': best['peak_intensity'],
-            'fwhm': best['fwhm'],
-            'cluster_size': len(coords)
-        })
-    
-    print(f"\n[Summary] {len(representatives)} valid particles from {len(clusters)} clusters")
-    return representatives
-
-def select_manual_representatives(self):
-    """Manual 좌표에서 대표 스펙트럼 선택"""
-    representatives = []
-    
-    print(f"\n[info] Processing {len(self.args['MANUAL_COORDS'])} manual coordinates...")
-    
-    for i, (row, col) in enumerate(self.args['MANUAL_COORDS']):
-        # 좌표 유효성 검사
-        if row < 0 or row >= self.cube.shape[0] or col < 0 or col >= self.cube.shape[1]:
-            print(f"[warning] Invalid coordinate ({row}, {col}) - skipping")
-            continue
-        
-        # 스펙트럼 추출
-        spectrum = self.cube[row, col, :]
-        
-        # Peak 정보
-        peak_idx = np.argmax(spectrum)
-        peak_wl = self.wvl[peak_idx]
-        peak_intensity = spectrum[peak_idx]
-        
-        # FWHM 추정
-        half_max = peak_intensity / 2
-        above_half = np.where(spectrum > half_max)[0]
-        if len(above_half) > 1:
-            fwhm = self.wvl[above_half[-1]] - self.wvl[above_half[0]]
+                print(f"  Cluster {cluster['label']}: No suitable background pixels nearby")
         else:
-            fwhm = 0
-        
-        representatives.append({
-            'label': i + 1,
-            'row': row,
-            'col': col,
-            'spectrum': spectrum,
-            'peak_wl': peak_wl,
-            'peak_intensity': peak_intensity,
-            'fwhm': fwhm,
-            'cluster_size': 1  # Manual은 1픽셀
-        })
-        
-        print(f"  Manual point {i}: ({row},{col}) - λ_peak={peak_wl:.1f}nm, intensity={peak_intensity:.1f}")
+            print(f"  Cluster {cluster['label']}: No valid pixels in search region")
     
-    return representatives
+    print(f"[debug] After local background correction: range [{corrected.min():.3f}, {corrected.max():.3f}]")
+    
+    return corrected
 
 def save_debug_image(args, img, name, cmap='hot'):
       
@@ -690,14 +598,3 @@ def save_debug_dfs_detection(args, max_map, labels, clusters):
     # 3. Labeled clusters
     ax3.imshow(labels, cmap='tab20', origin='lower')
     ax3.set_title(f'Detected Clusters (n={len(clusters)})')
-    
-    # 클러스터 중심 표시
-    for cluster in clusters:
-        center = cluster['center']
-        ax3.plot(center[1], center[0], 'w+', markersize=10, markeredgewidth=2)
-        ax3.text(center[1]+2, center[0]+2, str(cluster['label']), 
-                color='white', fontsize=8, fontweight='bold')
-    
-    plt.tight_layout()
-    plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_dfs_detection.png", dpi=150)
-    plt.close()
