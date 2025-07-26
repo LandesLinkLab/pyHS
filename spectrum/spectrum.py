@@ -40,46 +40,64 @@ class SpectrumAnalyzer:
             print("[warning] No clusters found for analysis")
             return
         
-        # 각 클러스터의 모든 픽셀에 대해 fitting
+        # Integration size (MATLAB과 동일)
+        int_size = 3
+        int_var = (int_size - 1) // 2
+        
+        # 각 클러스터의 중심 픽셀에 대해 fitting
         for cluster in self.dataset.clusters:
             cluster_results = []
             
             print(f"\n[Fitting Cluster {cluster['label']}] - {cluster['size']} pixels")
             
-            for coord in cluster['coords']:
-                row, col = coord
-                
-                # Extract spectrum
-                spectrum = self.dataset.cube[row, col, :]
-                
-                # Skip if spectrum is too weak
-                if spectrum.max() < 0.01:
-                    continue
-                
-                # Lorentzian fitting
-                y_fit, params, r2 = su.fit_lorentz(self.args, spectrum, self.dataset.wvl)
-                
-                # Calculate S/N
-                resid = spectrum - y_fit
-                noise = np.std(resid) if np.std(resid) > 0 else 1.0
-                peak_idx = np.argmax(spectrum)
-                snr = spectrum[peak_idx] / noise
-                
-                # Store results
-                result = {
-                    'row': row,
-                    'col': col,
-                    'spectrum': spectrum,
-                    'fit': y_fit,
-                    'params': params,
-                    'r2': r2,
-                    'snr': snr,
-                    'peak_wl': params.get('b1', self.dataset.wvl[peak_idx]),
-                    'fwhm': params.get('c1', 0),
-                    'peak_intensity': spectrum[peak_idx]
-                }
-                
-                cluster_results.append(result)
+            # 클러스터 중심 사용
+            center_row = int(cluster['center'][0])
+            center_col = int(cluster['center'][1])
+            
+            # 3x3 픽셀 통합
+            H, W, L = self.dataset.cube.shape
+            integrated_spectrum = np.zeros(L)
+            pixel_count = 0
+            
+            for m in range(-int_var, int_var + 1):
+                for l in range(-int_var, int_var + 1):
+                    row = center_row + m
+                    col = center_col + l
+                    
+                    # 경계 체크
+                    if 0 <= row < H and 0 <= col < W:
+                        integrated_spectrum += self.dataset.cube[row, col, :]
+                        pixel_count += 1
+            
+            # Skip if no valid pixels
+            if pixel_count == 0 or integrated_spectrum.max() < 0.01:
+                continue
+            
+            # Lorentzian fitting
+            y_fit, params, r2 = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
+            
+            # Calculate S/N
+            resid = integrated_spectrum - y_fit
+            noise = np.std(resid) if np.std(resid) > 0 else 1.0
+            peak_idx = np.argmax(integrated_spectrum)
+            snr = integrated_spectrum[peak_idx] / noise
+            
+            # Store results
+            result = {
+                'row': center_row,
+                'col': center_col,
+                'spectrum': integrated_spectrum,
+                'fit': y_fit,
+                'params': params,
+                'r2': r2,
+                'snr': snr,
+                'peak_wl': params.get('b1', self.dataset.wvl[peak_idx]),
+                'fwhm': params.get('c1', 0),
+                'peak_intensity': integrated_spectrum[peak_idx],
+                'integrated_pixels': pixel_count
+            }
+            
+            cluster_results.append(result)
             
             self.cluster_fits.append({
                 'cluster_label': cluster['label'],
@@ -87,10 +105,10 @@ class SpectrumAnalyzer:
                 'fits': cluster_results
             })
             
-            print(f"  Successfully fitted {len(cluster_results)} pixels")
+            print(f"  Integrated {pixel_count} pixels, peak at {result['peak_wl']:.1f} nm")
     
     def select_representatives(self):
-        """Select representative spectrum for each cluster based on fitting results"""
+        """Select representative spectrum for each cluster"""
         print("\n[Step] Selecting representative spectra for each cluster...")
         
         for cluster_fit in self.cluster_fits:
@@ -100,28 +118,15 @@ class SpectrumAnalyzer:
                 print(f"  Cluster {cluster_fit['cluster_label']}: No valid fits")
                 continue
             
-            # Check FWHM tolerance
-            fwhms = [f['fwhm'] for f in fits if f['fwhm'] > 0]
-            if len(fwhms) > 1:
-                fwhm_std = np.std(fwhms)
-                fwhm_mean = np.mean(fwhms)
-                print(f"\n  Cluster {cluster_fit['cluster_label']}:")
-                print(f"    FWHM: {fwhm_mean:.1f} ± {fwhm_std:.1f} nm")
-                
-                if fwhm_std > self.args['PEAK_TOL_NM']:
-                    print(f"    [Skipped] FWHM variation ({fwhm_std:.1f}) > tolerance ({self.args['PEAK_TOL_NM']})")
-                    continue
+            # 이제 클러스터당 하나의 fit만 있음
+            best = fits[0]
             
-            # Select best pixel - always use max intensity
-            # (FWHM tolerance already checked above)
-            best_idx = max(range(len(fits)), key=lambda i: fits[i]['peak_intensity'])
-            
-            best = fits[best_idx]
-            
-            print(f"    Selected pixel ({best['row']}, {best['col']})")
-            print(f"    - Peak: {best['peak_wl']:.1f} nm @ {best['peak_intensity']:.1f}")
-            print(f"    - FWHM: {best['fwhm']:.1f} nm")
-            print(f"    - S/N: {best['snr']:.1f}, R²: {best['r2']:.3f}")
+            print(f"\n  Cluster {cluster_fit['cluster_label']}:")
+            print(f"    Center: ({best['row']}, {best['col']})")
+            print(f"    Integrated pixels: {best['integrated_pixels']}")
+            print(f"    Peak: {best['peak_wl']:.1f} nm @ {best['peak_intensity']:.1f}")
+            print(f"    FWHM: {best['fwhm']:.1f} nm")
+            print(f"    S/N: {best['snr']:.1f}, R²: {best['r2']:.3f}")
             
             self.representatives.append({
                 'cluster_label': cluster_fit['cluster_label'],
@@ -135,7 +140,8 @@ class SpectrumAnalyzer:
                 'snr': best['snr'],
                 'peak_wl': best['peak_wl'],
                 'fwhm': best['fwhm'],
-                'peak_intensity': best['peak_intensity']
+                'peak_intensity': best['peak_intensity'],
+                'integrated_pixels': best['integrated_pixels']
             })
         
         print(f"\n[Summary] {len(self.representatives)} valid representatives from {len(self.cluster_fits)} clusters")

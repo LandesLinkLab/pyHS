@@ -413,7 +413,7 @@ def detect_particles_matlab_style(rgb_image, args):
     
     return labels, clusters
 
-def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref):
+def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref, raw_cube):
     """
     Apply background correction to cube
     I_corr = {S_raw(λ) / (W(λ) - D(λ))} - {B(λ) / (W(λ) - D(λ))}
@@ -424,14 +424,14 @@ def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref):
     
     if bg_mode == 'global':
         # MATLAB 방식의 global background
-        corrected = apply_global_background_matlab(cube, wvl, args, white_ref, dark_ref)
+        corrected = apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube)
     else:
         # Local background
-        corrected = apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref)
+        corrected = apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_cube)
     
     return corrected
 
-def apply_global_background_matlab(cube, wvl, args, white_ref, dark_ref):
+def apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube):
     """
     MATLAB anfunc_lorentz_fit.m과 동일한 global background subtraction
     전체 이미지에서 가장 어두운 픽셀들을 찾아 background로 사용
@@ -471,25 +471,32 @@ def apply_global_background_matlab(cube, wvl, args, white_ref, dark_ref):
     
     print(f"[debug] Using {n_dark} darkest pixels ({backper*100:.1f}% of {H*W} total pixels)")
     
-    # Background spectrum 계산 (이미 flatfield corrected된 상태)
-    bkavg = np.zeros(L)
+    # Background spectrum 계산 - RAW 데이터에서!
+    bkavg_raw = np.zeros(L)
     for i in range(n_dark):
         row = dark_indices[0][i]
         col = dark_indices[1][i]
-        bkavg += cube[row, col, :]  # 이미 {B(λ) / (W(λ) - D(λ))} 형태
+        bkavg_raw += raw_cube[row, col, :]  # raw spectrum 사용!
     
-    bkavg = bkavg / n_dark  # 평균
+    bkavg_raw = bkavg_raw / n_dark  # 평균
     
-    print(f"[debug] Background range: [{bkavg.min():.2f}, {bkavg.max():.2f}]")
+    # Background에도 flatfield correction 적용
+    # 전체 이미지의 평균 flatfield 사용
+    avg_flatfield = (white_ref - dark_ref).mean(axis=0).squeeze()
+    denominator = np.where(avg_flatfield > 0, avg_flatfield, 1.0)
+    bkavg_corrected = bkavg_raw / denominator
+    
+    print(f"[debug] Background (raw): [{bkavg_raw.min():.2f}, {bkavg_raw.max():.2f}]")
+    print(f"[debug] Background (corrected): [{bkavg_corrected.min():.2f}, {bkavg_corrected.max():.2f}]")
     
     # Background subtraction
-    # cube는 이미 {S_raw(λ) / (W(λ) - D(λ))}, bkavg는 {B(λ) / (W(λ) - D(λ))}
-    corrected = cube - bkavg[None, None, :]
+    # cube는 이미 {S_raw(λ) / (W(λ) - D(λ))}, bkavg_corrected는 {B(λ) / (W(λ) - D(λ))}
+    corrected = cube - bkavg_corrected[None, None, :]
     corrected = np.maximum(corrected, 0)  # No negative values
     
     return corrected
 
-def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref):
+def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_cube):
     """
     Local background correction
     각 클러스터 주변에서 가장 어두운 영역을 background로 사용
@@ -534,17 +541,32 @@ def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref):
             dark_pixels = np.where((intensity_map <= threshold) & mask)
             
             if len(dark_pixels[0]) > 0:
-                # Local background spectrum 계산 (이미 flatfield corrected)
-                background_spectra = search_region[dark_pixels[0], dark_pixels[1], :]
-                local_bg = background_spectra.mean(axis=0)  # {B(λ) / (W(λ) - D(λ))}
+                # Raw data에서 background 계산
+                background_raw = np.zeros(L)
+                for i in range(len(dark_pixels[0])):
+                    global_r = dark_pixels[0][i] + row_min
+                    global_c = dark_pixels[1][i] + col_min
+                    background_raw += raw_cube[global_r, global_c, :]  # raw 사용!
+                
+                background_raw /= len(dark_pixels[0])
+                
+                # Background에 flatfield correction 적용
+                avg_row = (row_min + row_max) // 2
+                if avg_row < white_ref.shape[0]:
+                    local_flatfield = white_ref[avg_row, 0, :] - dark_ref[avg_row, 0, :]
+                else:
+                    local_flatfield = white_ref[-1, 0, :] - dark_ref[-1, 0, :]
+                
+                denominator = np.where(local_flatfield > 0, local_flatfield, 1.0)
+                background_corrected = background_raw / denominator
                 
                 print(f"  Cluster {cluster['label']}: Using {len(dark_pixels[0])} pixels for local background")
-                print(f"    Background range: [{local_bg.min():.1f}, {local_bg.max():.1f}]")
+                print(f"    Background range: [{background_corrected.min():.1f}, {background_corrected.max():.1f}]")
                 
                 # 클러스터의 모든 픽셀에 local background subtraction 적용
                 for coord in coords:
                     r, c = coord
-                    corrected[r, c, :] = np.maximum(cube[r, c, :] - local_bg, 0)
+                    corrected[r, c, :] = np.maximum(cube[r, c, :] - background_corrected, 0)
             else:
                 print(f"  Cluster {cluster['label']}: No suitable background pixels nearby")
         else:

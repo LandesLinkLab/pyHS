@@ -20,6 +20,7 @@ class Dataset(object):
         self.clusters = None
         self.white_ref = None  # White reference for background correction
         self.dark_ref = None   # Dark reference for background correction
+        self.raw_cube = None
         
     def run_dataset(self):
         """
@@ -80,6 +81,8 @@ class Dataset(object):
     def flatfield(self):
         """Apply flatfield correction"""
         print(f"\n[debug] Applying flatfield correction...")
+
+        self.raw_cube = self.cube.copy()
         
         w = os.path.join(self.args['DATA_DIR'], self.args['WHITE_FILE'])
         d = os.path.join(self.args['DATA_DIR'], self.args['DARK_FILE'])
@@ -121,8 +124,7 @@ class Dataset(object):
         
         self.cube = du.apply_background_correction(
             self.cube, self.wvl, self.clusters, self.args, 
-            self.white_ref, self.dark_ref
-        )
+            self.white_ref, self.dark_ref, self.raw_cube)
         
         # Update max map after background correction
         wl_range = self.args.get('DFS_WL_RANGE', (500, 800))

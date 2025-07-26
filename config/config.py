@@ -6,14 +6,13 @@ args = dict()
 
 # Basic settings
 args['SAMPLE_NAME'] = 'AuNR_PMMA'
-args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw')
+args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw_jmkim')
 args['WHITE_FILE'] = "wc.tdms"
 args['DARK_FILE'] = "dc.tdms"
-args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_matlab_global")
+args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_python_global")
 
 # DFS-specific settings
 args['DFS_WL_RANGE'] = (500, 850)  # DFS max intensity map을 위한 범위
-args['DFS_INTENSITY_THRESHOLD'] = 0.05  # Python 방식 particle detection threshold
 
 # Preprocessing
 args['CROP_RANGE_NM'] = (500, 850)  
@@ -25,10 +24,10 @@ args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20
 args['BACKGROUND_LOCAL_PERCENTILE'] = 1
 
 # Particle detection style
-args['PARTICLE_DETECTION_STYLE'] = 'matlab'  # 'python' or 'matlab'
+args['PARTICLE_DETECTION_STYLE'] = 'python'  # 'python' or 'matlab'
 
 # Python style detection parameters
-args['DFS_INTENSITY_THRESHOLD'] = 0.01  # Threshold for Python style
+args['DFS_INTENSITY_THRESHOLD'] = 0.01  # Python 방식 particle detection threshold
 args['MIN_PIXELS_CLUS'] = 1  # 최소 클러스터 크기 (Python & MATLAB 공통)
 
 # MATLAB style detection parameters  
