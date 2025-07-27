@@ -416,9 +416,9 @@ def detect_particles_matlab_style(rgb_image, args):
 def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref, raw_cube):
     """
     Apply background correction to cube
-    I_corr = {S_raw(λ) / (W(λ) - D(λ))} - {B(λ) / (W(λ) - D(λ))}
+    MATLAB과 동일하게: Raw에서 배경 계산 → Raw에서 배경 제거 → Flatfield 적용
     
-    Note: cube는 이미 flatfield corrected 상태 {S_raw(λ) / (W(λ) - D(λ))}
+    Note: cube는 이미 flatfield corrected 상태이므로 다시 계산해야 함
     """
     bg_mode = args.get('BACKGROUND_MODE', 'global')
     
@@ -433,15 +433,16 @@ def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref, 
 
 def apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube):
     """
-    MATLAB anfunc_lorentz_fit.m과 동일한 global background subtraction
-    전체 이미지에서 가장 어두운 픽셀들을 찾아 background로 사용
+    MATLAB anfunc_lorentz_fit.m과 완전히 동일한 global background subtraction
+    순서: Raw 데이터에서 배경 계산 → 빼기 → Flatfield 적용
     """
     # Parameters
     backper = args.get('BACKGROUND_PERCENTILE', 0.1)  # 10%
     
     H, W, L = cube.shape
     
-    # 모든 파장에 대한 합 (이미 flatfield corrected)
+    # Step 1: Flatfield 보정된 데이터로 어두운 픽셀 위치만 찾기
+    # (MATLAB: imnorm=specim./stanim 후 가장 어두운 픽셀 찾기)
     sumnorm = cube.sum(axis=2)
     
     # Normalize (MATLAB 방식)
@@ -471,40 +472,62 @@ def apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube):
     
     print(f"[debug] Using {n_dark} darkest pixels ({backper*100:.1f}% of {H*W} total pixels)")
     
-    # Background spectrum 계산 - RAW 데이터에서!
+    # Step 2: RAW 데이터에서 배경 스펙트럼 계산
     bkavg_raw = np.zeros(L)
     for i in range(n_dark):
         row = dark_indices[0][i]
         col = dark_indices[1][i]
-        bkavg_raw += raw_cube[row, col, :]  # raw spectrum 사용!
+        bkavg_raw += raw_cube[row, col, :]  # RAW spectrum 사용!
     
     bkavg_raw = bkavg_raw / n_dark  # 평균
     
-    # Background에도 flatfield correction 적용
-    # 전체 이미지의 평균 flatfield 사용
-    avg_flatfield = (white_ref - dark_ref).mean(axis=0).squeeze()
-    denominator = np.where(avg_flatfield > 0, avg_flatfield, 1.0)
-    bkavg_corrected = bkavg_raw / denominator
+    print(f"[debug] Background from raw data: [{bkavg_raw.min():.2f}, {bkavg_raw.max():.2f}]")
     
-    print(f"[debug] Background (raw): [{bkavg_raw.min():.2f}, {bkavg_raw.max():.2f}]")
-    print(f"[debug] Background (corrected): [{bkavg_corrected.min():.2f}, {bkavg_corrected.max():.2f}]")
+    # Step 3: 각 픽셀에 대해 MATLAB과 동일한 순서로 처리
+    # MATLAB: specfin = (specim - bkgim) ./ stanim
+    corrected = np.zeros_like(cube)
     
-    # Background subtraction
-    # cube는 이미 {S_raw(λ) / (W(λ) - D(λ))}, bkavg_corrected는 {B(λ) / (W(λ) - D(λ))}
-    corrected = cube - bkavg_corrected[None, None, :]
-    corrected = np.maximum(corrected, 0)  # No negative values
+    for row in range(H):
+        # Row별 flatfield 선택
+        if row < white_ref.shape[0]:
+            flatfield = (white_ref[row, 0, :] - dark_ref[row, 0, :])
+        else:
+            flatfield = (white_ref[-1, 0, :] - dark_ref[-1, 0, :])
+        
+        denominator = np.where(flatfield > 0, flatfield, 1.0)
+        
+        for col in range(W):
+            # Raw 스펙트럼에서 배경 빼기
+            signal_raw = raw_cube[row, col, :] - bkavg_raw
+            
+            # Flatfield correction 적용
+            corrected[row, col, :] = signal_raw / denominator
+    
+    # No negative values
+    corrected = np.maximum(corrected, 0)
+    
+    print(f"[debug] After background correction: [{corrected.min():.3f}, {corrected.max():.3f}]")
     
     return corrected
 
 def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_cube):
     """
-    Local background correction
+    Local background correction - MATLAB 순서대로
     각 클러스터 주변에서 가장 어두운 영역을 background로 사용
+    Raw에서 배경 계산 → 빼기 → Flatfield 적용
     """
-    print(f"\n[debug] Applying local background correction")
+    print(f"\n[debug] Applying local background correction (fixed)")
     
     H, W, L = cube.shape
-    corrected = cube.copy()
+    corrected = np.zeros_like(cube)
+    
+    # 먼저 전체를 기본 global background로 초기화
+    # (클러스터에 속하지 않은 픽셀들을 위해)
+    corrected = apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube)
+    
+    # Integration size (3x3)
+    int_size = 3
+    int_var = (int_size - 1) // 2
     
     # 각 클러스터에 대해 local background 적용
     for cluster in clusters:
@@ -522,17 +545,20 @@ def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_c
         col_min = max(0, col_center - search_radius)
         col_max = min(W, col_center + search_radius)
         
-        # 검색 영역에서 intensity sum이 낮은 픽셀들 찾기
+        # 검색 영역에서 intensity sum이 낮은 픽셀들 찾기 (flatfield 보정된 데이터 사용)
         search_region = cube[row_min:row_max, col_min:col_max, :]
         intensity_map = search_region.sum(axis=2)
         
-        # 클러스터 픽셀은 제외
+        # 클러스터의 3x3 영역 픽셀들을 제외
         mask = np.ones(intensity_map.shape, dtype=bool)
-        for coord in coords:
-            local_r = coord[0] - row_min
-            local_c = coord[1] - col_min
-            if 0 <= local_r < mask.shape[0] and 0 <= local_c < mask.shape[1]:
-                mask[local_r, local_c] = False
+        
+        # 3x3 영역의 모든 픽셀을 마스크에서 제외
+        for m in range(-int_var, int_var + 1):
+            for l in range(-int_var, int_var + 1):
+                local_r = row_center + m - row_min
+                local_c = col_center + l - col_min
+                if 0 <= local_r < mask.shape[0] and 0 <= local_c < mask.shape[1]:
+                    mask[local_r, local_c] = False
         
         # 가장 어두운 픽셀들 선택
         masked_intensity = intensity_map[mask]
@@ -541,32 +567,42 @@ def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_c
             dark_pixels = np.where((intensity_map <= threshold) & mask)
             
             if len(dark_pixels[0]) > 0:
-                # Raw data에서 background 계산
+                # RAW data에서 background 계산
                 background_raw = np.zeros(L)
                 for i in range(len(dark_pixels[0])):
                     global_r = dark_pixels[0][i] + row_min
                     global_c = dark_pixels[1][i] + col_min
-                    background_raw += raw_cube[global_r, global_c, :]  # raw 사용!
+                    background_raw += raw_cube[global_r, global_c, :]  # RAW 사용!
                 
                 background_raw /= len(dark_pixels[0])
                 
-                # Background에 flatfield correction 적용
-                avg_row = (row_min + row_max) // 2
-                if avg_row < white_ref.shape[0]:
-                    local_flatfield = white_ref[avg_row, 0, :] - dark_ref[avg_row, 0, :]
-                else:
-                    local_flatfield = white_ref[-1, 0, :] - dark_ref[-1, 0, :]
-                
-                denominator = np.where(local_flatfield > 0, local_flatfield, 1.0)
-                background_corrected = background_raw / denominator
-                
                 print(f"  Cluster {cluster['label']}: Using {len(dark_pixels[0])} pixels for local background")
-                print(f"    Background range: [{background_corrected.min():.1f}, {background_corrected.max():.1f}]")
+                print(f"    Raw background range: [{background_raw.min():.1f}, {background_raw.max():.1f}]")
                 
-                # 클러스터의 모든 픽셀에 local background subtraction 적용
-                for coord in coords:
-                    r, c = coord
-                    corrected[r, c, :] = np.maximum(cube[r, c, :] - background_corrected, 0)
+                # 3x3 영역 전체에 동일한 처리 적용
+                pixels_corrected = 0
+                for m in range(-int_var, int_var + 1):
+                    for l in range(-int_var, int_var + 1):
+                        r = row_center + m
+                        c = col_center + l
+                        
+                        # 경계 체크
+                        if 0 <= r < H and 0 <= c < W:
+                            # Raw에서 배경 빼기
+                            signal_raw = raw_cube[r, c, :] - background_raw
+                            
+                            # Row별 flatfield 적용
+                            if r < white_ref.shape[0]:
+                                flatfield = (white_ref[r, 0, :] - dark_ref[r, 0, :])
+                            else:
+                                flatfield = (white_ref[-1, 0, :] - dark_ref[-1, 0, :])
+                            
+                            denominator = np.where(flatfield > 0, flatfield, 1.0)
+                            corrected[r, c, :] = np.maximum(signal_raw / denominator, 0)
+                            pixels_corrected += 1
+                
+                print(f"    Applied to {pixels_corrected} pixels in 3x3 region")
+                
             else:
                 print(f"  Cluster {cluster['label']}: No suitable background pixels nearby")
         else:

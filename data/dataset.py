@@ -21,6 +21,7 @@ class Dataset(object):
         self.white_ref = None  # White reference for background correction
         self.dark_ref = None   # Dark reference for background correction
         self.raw_cube = None
+        self.max_map_before_bg = None
         
     def run_dataset(self):
         """
@@ -121,10 +122,10 @@ class Dataset(object):
     def apply_background(self):
         """Apply background correction"""
         print("\n[Step] Applying background correction...")
+
+        self.max_map_before_bg = self.max_map.copy()
         
-        self.cube = du.apply_background_correction(
-            self.cube, self.wvl, self.clusters, self.args, 
-            self.white_ref, self.dark_ref, self.raw_cube)
+        self.cube = du.apply_background_correction(self.cube, self.wvl, self.clusters, self.args, self.white_ref, self.dark_ref, self.raw_cube)
         
         # Update max map after background correction
         wl_range = self.args.get('DFS_WL_RANGE', (500, 800))

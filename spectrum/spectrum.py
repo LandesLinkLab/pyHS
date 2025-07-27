@@ -174,9 +174,11 @@ class SpectrumAnalyzer:
         
         out_dir = Path(self.args['OUTPUT_DIR'])
         output_path = out_dir / f"{self.dataset.sample_name}_dfs_markers.png"
+
+        display_map = self.dataset.max_map_before_bg if hasattr(self.dataset, 'max_map_before_bg') else self.dataset.max_map
         
         su.save_dfs_particle_map(
-            self.dataset.max_map,
+            display_map,
             self.representatives,
             output_path,
             self.dataset.sample_name
