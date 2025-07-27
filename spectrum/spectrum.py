@@ -54,9 +54,10 @@ class SpectrumAnalyzer:
             center_row = int(cluster['center'][0])
             center_col = int(cluster['center'][1])
             
-            # 3x3 픽셀 통합
+            # 3x3 픽셀 통합 (보정된 데이터와 raw 데이터 모두)
             H, W, L = self.dataset.cube.shape
             integrated_spectrum = np.zeros(L)
+            raw_integrated_spectrum = np.zeros(L)  # RAW 데이터 추가
             pixel_count = 0
             
             for m in range(-int_var, int_var + 1):
@@ -67,33 +68,58 @@ class SpectrumAnalyzer:
                     # 경계 체크
                     if 0 <= row < H and 0 <= col < W:
                         integrated_spectrum += self.dataset.cube[row, col, :]
+                        # Raw 스펙트럼도 통합
+                        raw_integrated_spectrum += self.dataset.raw_cube[row, col, :]
                         pixel_count += 1
             
             # Skip if no valid pixels
             if pixel_count == 0 or integrated_spectrum.max() < 0.01:
                 continue
             
-            # Lorentzian fitting
-            y_fit, params, r2 = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
+            # Lorentzian fitting (보정된 데이터로 수행)
+            # y_fit, params, r2 = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
+            y_fit, params, r2, fit_residuals = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
+
+            if len(fit_residuals) > 0:
+
+                noise = np.std(fit_residuals)
+                if noise <= 0:
+
+                    noise = 1.0
+                    print(f"[warning] Zero noise detected, using fallback value")
+
+            else:
+
+                noise = 1.0
+                print(f"[warning] No fit residuals available, use fallback value")
             
-            # Calculate S/N
+            # MATLAB 방식 SNR 계산
+            # 1. 노이즈: 보정된 데이터의 fitting 잔차의 표준편차
             resid = integrated_spectrum - y_fit
             noise = np.std(resid) if np.std(resid) > 0 else 1.0
-            peak_idx = np.argmax(integrated_spectrum)
-            snr = integrated_spectrum[peak_idx] / noise
+            
+            # 2. 신호: 공명 파장에서의 RAW 데이터 값
+            resonance_wl = params.get('b1', self.dataset.wvl[np.argmax(integrated_spectrum)])
+            resonance_idx = np.argmin(np.abs(self.dataset.wvl - resonance_wl))
+            signal = raw_integrated_spectrum[resonance_idx]
+            
+            # 3. SNR
+            snr = signal / noise
             
             # Store results
             result = {
                 'row': center_row,
                 'col': center_col,
                 'spectrum': integrated_spectrum,
+                'raw_spectrum': raw_integrated_spectrum,  # Raw 데이터 저장
                 'fit': y_fit,
                 'params': params,
                 'r2': r2,
                 'snr': snr,
-                'peak_wl': params.get('b1', self.dataset.wvl[peak_idx]),
+                'peak_wl': params.get('b1', self.dataset.wvl[resonance_idx]),
                 'fwhm': params.get('c1', 0),
-                'peak_intensity': integrated_spectrum[peak_idx],
+                'peak_intensity': integrated_spectrum[resonance_idx],
+                'raw_peak_intensity': signal,  # Raw 신호값 저장
                 'integrated_pixels': pixel_count
             }
             
@@ -106,6 +132,7 @@ class SpectrumAnalyzer:
             })
             
             print(f"  Integrated {pixel_count} pixels, peak at {result['peak_wl']:.1f} nm")
+            print(f"  SNR (MATLAB style): {snr:.1f} (raw signal: {signal:.1f}, noise: {noise:.3f})")
     
     def select_representatives(self):
         """Select representative spectrum for each cluster"""
