@@ -164,12 +164,13 @@ class SpectrumAnalyzer:
         
         for i, rep in enumerate(self.representatives):
             # Plot spectrum
+            particle_num = i + 1
             su.plot_spectrum(
                 self.dataset.wvl,
                 rep['spectrum'],
                 rep['fit'],
-                f"Particle {i} (Cluster {rep['cluster_label']})",
-                out_dir / f"{self.dataset.sample_name}_particle_{i:03d}.png",
+                f"Particle {particle_num} (Cluster {rep['cluster_label']})",
+                out_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.png",
                 dpi=self.args["FIG_DPI"],
                 params=rep['params'],
                 snr=rep['snr'],
@@ -202,9 +203,10 @@ class SpectrumAnalyzer:
         
         for i, rep in enumerate(self.representatives):
             # Save spectrum data
+            particle_num = i + 1
             data = np.column_stack((self.dataset.wvl, rep['spectrum'], rep['fit']))
             header = f"Wavelength(nm)\tIntensity\tFit\n"
-            header += f"# Particle {i}, Cluster {rep['cluster_label']}, Position ({rep['row']},{rep['col']})\n"
+            header += f"# Particle {particle_num}, Cluster {rep['cluster_label']}, Position ({rep['row']},{rep['col']})\n"
             header += f"# Peak: {rep['peak_wl']:.1f} nm, FWHM: {rep['fwhm']:.1f} nm, S/N: {rep['snr']:.1f}"
             
             np.savetxt(

@@ -161,6 +161,7 @@ def save_dfs_particle_map(max_map: np.ndarray,
         row, col = rep['row'], rep['col']
         
         # White circle marker
+        particle_num = i + 1
         circle_inner = plt.Circle((col, row), 
                                  radius=1.5,
                                  edgecolor='white',
@@ -170,7 +171,7 @@ def save_dfs_particle_map(max_map: np.ndarray,
         
         # Particle number
         ax.text(col - 1, row + 3,
-                f'{i}',
+                f'{particle_num}',
                 color='white',
                 fontsize=6,
                 fontweight='bold',
