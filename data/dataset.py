@@ -109,9 +109,6 @@ class Dataset(object):
         
         # Debug 이미지 저장
         du.save_debug_image(self.args, self.max_map, "dfs_max_map", cmap='hot')
-        
-        # 좌표 선택을 위한 그리드 이미지도 저장 (클러스터 없이)
-        du.save_coordinate_grid_image(self.args, self.max_map, clusters=None)
     
     def detect_particles_dfs(self):
         """Detect particles using DFS-specific method"""
@@ -141,3 +138,5 @@ class Dataset(object):
         wl_range = self.args.get('DFS_WL_RANGE', (500, 800))
         self.max_map = du.create_dfs_max_intensity_map(self.cube, self.wvl, wl_range)
         du.save_debug_image(self.args, self.max_map, "dfs_max_map_bg_corrected", cmap='hot')
+
+        du.save_coordinate_grid_image(self.args, self.max_map)

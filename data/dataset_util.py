@@ -634,18 +634,17 @@ def save_debug_image(args, img, name, cmap='hot'):
     plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_{name}.png", dpi=150)
     plt.close()
 
-def save_coordinate_grid_image(args, max_map, clusters=None):
+def save_coordinate_grid_image(args, max_map):
     """
     Save a debug image with coordinate grid for manual coordinate selection
+    Uses background-corrected max map for better visibility
     
     Parameters:
     -----------
     args : dict
         Configuration arguments
     max_map : np.ndarray
-        Maximum intensity map
-    clusters : List[dict], optional
-        Current clusters to overlay
+        Background-corrected maximum intensity map
     """
     out_dir = Path(args['OUTPUT_DIR']) / "debug"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -653,7 +652,7 @@ def save_coordinate_grid_image(args, max_map, clusters=None):
     fig, ax = plt.subplots(figsize=(14, 10))
     
     # Display the max intensity map
-    im = ax.imshow(max_map, cmap='hot', origin='lower', aspect='auto')
+    im = ax.imshow(max_map, cmap='hot', origin='lower')
     plt.colorbar(im, ax=ax, label='Intensity')
     
     # Get image dimensions
@@ -666,24 +665,24 @@ def save_coordinate_grid_image(args, max_map, clusters=None):
     major_y = np.arange(0, H, major_interval)
     
     # Minor grid every 5 pixels
-    minor_interval = 5
+    minor_interval = 1
     minor_x = np.arange(0, W, minor_interval)
     minor_y = np.arange(0, H, minor_interval)
     
     # Draw grid lines
     # Major grid
     for x in major_x:
-        ax.axvline(x - 0.5, color='white', linewidth=0.8, alpha=0.5)
+        ax.axvline(x, color='white', linewidth=0.8, alpha=0.5)
     for y in major_y:
-        ax.axhline(y - 0.5, color='white', linewidth=0.8, alpha=0.5)
+        ax.axhline(y, color='white', linewidth=0.8, alpha=0.5)
     
     # Minor grid
     for x in minor_x:
         if x % major_interval != 0:  # Skip major grid lines
-            ax.axvline(x - 0.5, color='white', linewidth=0.4, alpha=0.3, linestyle='--')
+            ax.axvline(x, color='white', linewidth=0.4, alpha=0.3, linestyle='--')
     for y in minor_y:
         if y % major_interval != 0:
-            ax.axhline(y - 0.5, color='white', linewidth=0.4, alpha=0.3, linestyle='--')
+            ax.axhline(y, color='white', linewidth=0.4, alpha=0.3, linestyle='--')
     
     # Set tick labels
     # Show ticks every 10 pixels
@@ -707,34 +706,12 @@ def save_coordinate_grid_image(args, max_map, clusters=None):
     # Labels
     ax.set_xlabel('X (column)', fontsize=12, color='yellow', fontweight='bold')
     ax.set_ylabel('Y (row)', fontsize=12, color='yellow', fontweight='bold')
-    ax.set_title(f'{args["SAMPLE_NAME"]} - Coordinate Grid (for Manual Selection)', 
+    ax.set_title(f'{args["SAMPLE_NAME"]} - Coordinate Grid (Background Corrected)', 
                 fontsize=14, pad=10)
-    
-    # If clusters exist, mark them
-    if clusters:
-        for cluster in clusters:
-            center = cluster['center']
-            # Draw crosshair at center
-            ax.plot(center[1], center[0], 'c+', markersize=12, markeredgewidth=2)
-            # Draw box around 3x3 region
-            rect = plt.Rectangle((center[1] - 1.5, center[0] - 1.5), 
-                               3, 3, 
-                               fill=False, 
-                               edgecolor='cyan', 
-                               linewidth=2,
-                               linestyle='-')
-            ax.add_patch(rect)
-            # Label
-            ax.text(center[1] + 2, center[0] + 2, 
-                   f"C{cluster['label']}", 
-                   color='cyan', 
-                   fontsize=10, 
-                   fontweight='bold',
-                   bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.8))
     
     # Add coordinate helper text
     help_text = "Grid: Major lines every 10 pixels, minor lines every 5 pixels\n"
-    help_text += "Coordinates shown as (row, col) in config file"
+    help_text += "Coordinates format: (row, col)"
     ax.text(0.02, 0.98, help_text, 
            transform=ax.transAxes, 
            verticalalignment='top',
@@ -764,9 +741,7 @@ def save_debug_dfs_detection(args, max_map, labels, clusters):
     else:
         # MATLAB 방식: 간단한 결과만
         save_debug_matlab_detection(args, max_map, labels, clusters, out_dir)
-    
-    # 추가: 좌표 그리드 이미지 저장 (모든 경우에)
-    save_coordinate_grid_image(args, max_map, clusters)
+
 
 def save_debug_python_detection(args, max_map, labels, clusters, out_dir):
     """Python 방식 detection의 상세 시각화"""

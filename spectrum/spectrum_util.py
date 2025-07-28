@@ -162,7 +162,7 @@ def save_dfs_particle_map(max_map: np.ndarray,
         
         # White circle marker
         circle_inner = plt.Circle((col, row), 
-                                 radius=3,
+                                 radius=1.5,
                                  edgecolor='white',
                                  facecolor='none',
                                  linewidth=2)
