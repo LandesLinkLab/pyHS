@@ -4,75 +4,55 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from typing import List, Dict, Tuple, Optional, Any, Union
 
-def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float, np.ndarray]:
+def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
     """
     Fit Lorentzian function to spectrum
-    Returns: y_fit_full, params, rsq, fit_residuals
+    MATLAB과 동일하게 전체 범위에서 fitting 수행
+    Returns: y_fit, params, rsq
     """
-    # Fitting 범위 적용
-    if 'FIT_RANGE_NM' in args:
-        fit_min, fit_max = args['FIT_RANGE_NM']
-        mask = (x >= fit_min) & (x <= fit_max)
-        x_fit = x[mask]
-        y_fit = y[mask]
-        
-        if len(x_fit) < 10:  # 최소 10개 포인트 필요
-            print(f"[warning] Too few points in fit range {fit_min}-{fit_max}nm")
-            x_fit = x
-            y_fit = y
-            mask = np.ones(len(x), dtype=bool)
-    else:
-        x_fit = x
-        y_fit = y
-        mask = np.ones(len(x), dtype=bool)
-    
     def lorentz_matlab_form(x, a, b, c):
         return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
     
     # Check if input data is valid
-    if len(y_fit) == 0 or np.all(y_fit == 0) or np.isnan(y_fit).any():
+    if len(y) == 0 or np.all(y == 0) or np.isnan(y).any():
         print("[warning] Invalid spectrum data for fitting")
-        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0, np.array([])
+        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
     
     # Initial guess
-    idx = int(np.argmax(y_fit))
-    if y_fit[idx] <= 0:
+    idx = int(np.argmax(y))
+    if y[idx] <= 0:
         print("[warning] No positive values in spectrum")
-        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0, np.array([])
+        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
     
     # Better initial guesses
-    a0 = float(y_fit[idx] * np.pi / 2)
-    b0 = float(x_fit[idx])
+    a0 = float(y[idx] * np.pi / 2)
+    b0 = float(x[idx])
     
     # Estimate FWHM
-    half_max = y_fit[idx] / 2
-    indices_above_half = np.where(y_fit > half_max)[0]
+    half_max = y[idx] / 2
+    indices_above_half = np.where(y > half_max)[0]
     if len(indices_above_half) > 1:
-        c0 = float(x_fit[indices_above_half[-1]] - x_fit[indices_above_half[0]])
+        c0 = float(x[indices_above_half[-1]] - x[indices_above_half[0]])
     else:
         c0 = 70.0
     
     p0 = [a0, b0, c0]
     
     try:
-        # Set bounds
-        bounds = ([0, x_fit.min(), 0], [np.inf, x_fit.max(), np.inf])
+        # Set bounds - MATLAB과 동일
+        bounds = ([0, x.min(), 0], [np.inf, x.max(), np.inf])
         
-        # Fit on selected range
-        popt, pcov = curve_fit(lorentz_matlab_form, x_fit, y_fit, p0=p0, 
+        # Fit on full range - MATLAB과 동일
+        popt, pcov = curve_fit(lorentz_matlab_form, x, y, p0=p0, 
                               bounds=bounds, maxfev=8000, 
                               method='trf')
         
-        # Generate fit for full range (for plotting)
-        y_fit_full = lorentz_matlab_form(x, *popt)
+        # Generate fit
+        y_fit = lorentz_matlab_form(x, *popt)
         
-        # 핵심 수정: fitting 범위에서만 잔차 계산
-        y_fit_range = lorentz_matlab_form(x_fit, *popt)
-        fit_residuals = y_fit - y_fit_range  # fitting 범위의 잔차만
-        
-        # Calculate R-squared on fit range
-        ss_res = np.sum(fit_residuals**2)
-        ss_tot = np.sum((y_fit - y_fit.mean())**2)
+        # Calculate R-squared on full range
+        ss_res = np.sum((y - y_fit)**2)
+        ss_tot = np.sum((y - y.mean())**2)
         rsq = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
         
         # Parameters
@@ -82,90 +62,11 @@ def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.
             'c1': popt[2],  # FWHM (Γ)
         }
         
-        return y_fit_full, params, float(rsq), fit_residuals
+        return y_fit, params, float(rsq)
     
     except Exception as e:
         print(f"[warning] Fitting failed: {str(e)}")
-        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0, np.array([])
-
-# def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
-#     """
-#     Fit Lorentzian function to spectrum
-#     Using the same form as MATLAB: (2*a/pi) * (c / (4*(x-b)^2 + c^2))
-#     """
-#     # Fitting 범위 적용
-#     if 'FIT_RANGE_NM' in args:
-#         fit_min, fit_max = args['FIT_RANGE_NM']
-#         mask = (x >= fit_min) & (x <= fit_max)
-#         x_fit = x[mask]
-#         y_fit = y[mask]
-        
-#         if len(x_fit) < 10:  # 최소 10개 포인트 필요
-#             print(f"[warning] Too few points in fit range {fit_min}-{fit_max}nm")
-#             x_fit = x
-#             y_fit = y
-#     else:
-#         x_fit = x
-#         y_fit = y
-    
-#     def lorentz_matlab_form(x, a, b, c):
-#         return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
-    
-#     # Check if input data is valid
-#     if len(y_fit) == 0 or np.all(y_fit == 0) or np.isnan(y_fit).any():
-#         print("[warning] Invalid spectrum data for fitting")
-#         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
-    
-#     # Initial guess
-#     idx = int(np.argmax(y_fit))
-#     if y_fit[idx] <= 0:
-#         print("[warning] No positive values in spectrum")
-#         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
-    
-#     # Better initial guesses
-#     a0 = float(y_fit[idx] * np.pi / 2)
-#     b0 = float(x_fit[idx])
-    
-#     # Estimate FWHM
-#     half_max = y_fit[idx] / 2
-#     indices_above_half = np.where(y_fit > half_max)[0]
-#     if len(indices_above_half) > 1:
-#         c0 = float(x_fit[indices_above_half[-1]] - x_fit[indices_above_half[0]])
-#     else:
-#         c0 = 70.0
-    
-#     p0 = [a0, b0, c0]
-    
-#     try:
-#         # Set bounds
-#         bounds = ([0, x_fit.min(), 0], [np.inf, x_fit.max(), np.inf])
-        
-#         # Fit on selected range
-#         popt, pcov = curve_fit(lorentz_matlab_form, x_fit, y_fit, p0=p0, 
-#                               bounds=bounds, maxfev=8000, 
-#                               method='trf')
-        
-#         # Generate fit for full range
-#         y_fit_full = lorentz_matlab_form(x, *popt)
-        
-#         # Calculate R-squared on fit range
-#         y_fit_range = lorentz_matlab_form(x_fit, *popt)
-#         ss_res = np.sum((y_fit - y_fit_range)**2)
-#         ss_tot = np.sum((y_fit - y_fit.mean())**2)
-#         rsq = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-        
-#         # Parameters
-#         params = {
-#             'a': popt[0], 
-#             'b1': popt[1],  # λ_max
-#             'c1': popt[2],  # FWHM (Γ)
-#         }
-        
-#         return y_fit_full, params, float(rsq)
-    
-#     except Exception as e:
-#         print(f"[warning] Fitting failed: {str(e)}")
-#         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
 
 def plot_spectrum(x: np.ndarray, 
                 y: np.ndarray, 
@@ -180,10 +81,6 @@ def plot_spectrum(x: np.ndarray,
     Plot spectrum exactly like MATLAB version
     """
     fig, ax = plt.subplots(figsize=(8, 6))
-
-    if args and 'FIT_RANGE_NM' in args:
-        fit_min, fit_max = args['FIT_RANGE_NM']
-        ax.axvspan(fit_min, fit_max, alpha=0.1, color='gray', label='Fit range')
     
     # MATLAB과 동일한 스타일
     ax.plot(x, y, 'b-', linewidth=3, label='Data')
@@ -273,7 +170,7 @@ def save_dfs_particle_map(max_map: np.ndarray,
                 bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
         
         # Wavelength and cluster info
-        ax.text(col + 5, row - 3,
+        ax.text(col - 3, row - 3,
                 # f'{rep["peak_wl"]:.0f}nm (C{rep["cluster_label"]})',
                 f'{rep["peak_wl"]:.0f}nm',
                 color='yellow',
