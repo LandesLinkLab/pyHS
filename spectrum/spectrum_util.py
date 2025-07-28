@@ -10,49 +10,56 @@ def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.
     MATLAB과 동일하게 전체 범위에서 fitting 수행
     Returns: y_fit, params, rsq
     """
+
+    fit_min, fit_max = args['FIT_RANGE_NM']
+    mask = (x >= fit_min) & (x <= fit_max)
+    x_fit = x[mask]
+    y_fit = y[mask]
+        
     def lorentz_matlab_form(x, a, b, c):
         return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
     
     # Check if input data is valid
-    if len(y) == 0 or np.all(y == 0) or np.isnan(y).any():
+    if len(y_fit) == 0 or np.all(y_fit == 0) or np.isnan(y_fit).any():
         print("[warning] Invalid spectrum data for fitting")
         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
     
-    # Initial guess
-    idx = int(np.argmax(y))
-    if y[idx] <= 0:
+    # Initial guess - y_fit 사용!
+    idx = int(np.argmax(y_fit))
+    if y_fit[idx] <= 0:
         print("[warning] No positive values in spectrum")
         return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
     
     # Better initial guesses
-    a0 = float(y[idx] * np.pi / 2)
-    b0 = float(x[idx])
+    a0 = float(y_fit[idx] * np.pi / 2)
+    b0 = float(x_fit[idx])
     
     # Estimate FWHM
-    half_max = y[idx] / 2
-    indices_above_half = np.where(y > half_max)[0]
+    half_max = y_fit[idx] / 2
+    indices_above_half = np.where(y_fit > half_max)[0]
     if len(indices_above_half) > 1:
-        c0 = float(x[indices_above_half[-1]] - x[indices_above_half[0]])
+        c0 = float(x_fit[indices_above_half[-1]] - x_fit[indices_above_half[0]])
     else:
         c0 = 70.0
     
     p0 = [a0, b0, c0]
     
     try:
-        # Set bounds - MATLAB과 동일
-        bounds = ([0, x.min(), 0], [np.inf, x.max(), np.inf])
+        # Set bounds - x_fit 사용!
+        bounds = ([0, x_fit.min(), 0], [np.inf, x_fit.max(), np.inf])
         
-        # Fit on full range - MATLAB과 동일
-        popt, pcov = curve_fit(lorentz_matlab_form, x, y, p0=p0, 
+        # Fit on selected range - x_fit, y_fit 사용!
+        popt, pcov = curve_fit(lorentz_matlab_form, x_fit, y_fit, p0=p0, 
                               bounds=bounds, maxfev=8000, 
                               method='trf')
         
-        # Generate fit
-        y_fit = lorentz_matlab_form(x, *popt)
+        # Generate fit for FULL range (원본 x 사용)
+        y_fit_full = lorentz_matlab_form(x, *popt)
         
-        # Calculate R-squared on full range
-        ss_res = np.sum((y - y_fit)**2)
-        ss_tot = np.sum((y - y.mean())**2)
+        # Calculate R-squared on fit range
+        y_fit_range = lorentz_matlab_form(x_fit, *popt)
+        ss_res = np.sum((y_fit - y_fit_range)**2)
+        ss_tot = np.sum((y_fit - y_fit.mean())**2)
         rsq = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
         
         # Parameters
@@ -62,7 +69,7 @@ def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.
             'c1': popt[2],  # FWHM (Γ)
         }
         
-        return y_fit, params, float(rsq)
+        return y_fit_full, params, float(rsq)
     
     except Exception as e:
         print(f"[warning] Fitting failed: {str(e)}")
