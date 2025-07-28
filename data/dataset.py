@@ -109,12 +109,22 @@ class Dataset(object):
         
         # Debug 이미지 저장
         du.save_debug_image(self.args, self.max_map, "dfs_max_map", cmap='hot')
+        
+        # 좌표 선택을 위한 그리드 이미지도 저장 (클러스터 없이)
+        du.save_coordinate_grid_image(self.args, self.max_map, clusters=None)
     
     def detect_particles_dfs(self):
         """Detect particles using DFS-specific method"""
-        print("\n[Step] Detecting particles from DFS data...")
-        
-        self.labels, self.clusters = du.detect_dfs_particles(self.max_map, self.args)
+
+        if self.args.get("USE_MANUAL_COORDS", False):
+
+            print("\n[Step] Using manual coordinates for particles...")
+            self.labels, self.clusters = du.create_manual_clusters(self.max_map, self.args["MANUAL_COORDS"], self.args)
+
+        else:
+
+            print("\n[Step] Detecting particles from DFS data...")
+            self.labels, self.clusters = du.detect_dfs_particles(self.max_map, self.args)
         
         # Debug 이미지 저장
         du.save_debug_dfs_detection(self.args, self.max_map, self.labels, self.clusters)

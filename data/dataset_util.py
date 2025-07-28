@@ -634,6 +634,122 @@ def save_debug_image(args, img, name, cmap='hot'):
     plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_{name}.png", dpi=150)
     plt.close()
 
+def save_coordinate_grid_image(args, max_map, clusters=None):
+    """
+    Save a debug image with coordinate grid for manual coordinate selection
+    
+    Parameters:
+    -----------
+    args : dict
+        Configuration arguments
+    max_map : np.ndarray
+        Maximum intensity map
+    clusters : List[dict], optional
+        Current clusters to overlay
+    """
+    out_dir = Path(args['OUTPUT_DIR']) / "debug"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    fig, ax = plt.subplots(figsize=(14, 10))
+    
+    # Display the max intensity map
+    im = ax.imshow(max_map, cmap='hot', origin='lower', aspect='auto')
+    plt.colorbar(im, ax=ax, label='Intensity')
+    
+    # Get image dimensions
+    H, W = max_map.shape
+    
+    # Set up major and minor grids
+    # Major grid every 10 pixels
+    major_interval = 10
+    major_x = np.arange(0, W, major_interval)
+    major_y = np.arange(0, H, major_interval)
+    
+    # Minor grid every 5 pixels
+    minor_interval = 5
+    minor_x = np.arange(0, W, minor_interval)
+    minor_y = np.arange(0, H, minor_interval)
+    
+    # Draw grid lines
+    # Major grid
+    for x in major_x:
+        ax.axvline(x - 0.5, color='white', linewidth=0.8, alpha=0.5)
+    for y in major_y:
+        ax.axhline(y - 0.5, color='white', linewidth=0.8, alpha=0.5)
+    
+    # Minor grid
+    for x in minor_x:
+        if x % major_interval != 0:  # Skip major grid lines
+            ax.axvline(x - 0.5, color='white', linewidth=0.4, alpha=0.3, linestyle='--')
+    for y in minor_y:
+        if y % major_interval != 0:
+            ax.axhline(y - 0.5, color='white', linewidth=0.4, alpha=0.3, linestyle='--')
+    
+    # Set tick labels
+    # Show ticks every 10 pixels
+    ax.set_xticks(major_x)
+    ax.set_yticks(major_y)
+    ax.set_xticklabels(major_x)
+    ax.set_yticklabels(major_y)
+    
+    # Add minor ticks without labels
+    ax.set_xticks(minor_x, minor=True)
+    ax.set_yticks(minor_y, minor=True)
+    
+    # Styling
+    ax.tick_params(axis='both', which='major', labelsize=10, color='white', labelcolor='yellow')
+    ax.tick_params(axis='both', which='minor', size=3)
+    
+    # Set axis limits to show full image
+    ax.set_xlim(-0.5, W - 0.5)
+    ax.set_ylim(-0.5, H - 0.5)
+    
+    # Labels
+    ax.set_xlabel('X (column)', fontsize=12, color='yellow', fontweight='bold')
+    ax.set_ylabel('Y (row)', fontsize=12, color='yellow', fontweight='bold')
+    ax.set_title(f'{args["SAMPLE_NAME"]} - Coordinate Grid (for Manual Selection)', 
+                fontsize=14, pad=10)
+    
+    # If clusters exist, mark them
+    if clusters:
+        for cluster in clusters:
+            center = cluster['center']
+            # Draw crosshair at center
+            ax.plot(center[1], center[0], 'c+', markersize=12, markeredgewidth=2)
+            # Draw box around 3x3 region
+            rect = plt.Rectangle((center[1] - 1.5, center[0] - 1.5), 
+                               3, 3, 
+                               fill=False, 
+                               edgecolor='cyan', 
+                               linewidth=2,
+                               linestyle='-')
+            ax.add_patch(rect)
+            # Label
+            ax.text(center[1] + 2, center[0] + 2, 
+                   f"C{cluster['label']}", 
+                   color='cyan', 
+                   fontsize=10, 
+                   fontweight='bold',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.8))
+    
+    # Add coordinate helper text
+    help_text = "Grid: Major lines every 10 pixels, minor lines every 5 pixels\n"
+    help_text += "Coordinates shown as (row, col) in config file"
+    ax.text(0.02, 0.98, help_text, 
+           transform=ax.transAxes, 
+           verticalalignment='top',
+           fontsize=10,
+           color='yellow',
+           bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
+    
+    # Save figure
+    plt.tight_layout()
+    output_path = out_dir / f"{args['SAMPLE_NAME']}_coordinate_grid.png"
+    plt.savefig(output_path, dpi=150, facecolor='black')
+    plt.close()
+    
+    print(f"[info] Saved coordinate grid image: {output_path}")
+
 def save_debug_dfs_detection(args, max_map, labels, clusters):
     """Save debug images for particle detection results"""
     out_dir = Path(args['OUTPUT_DIR']) / "debug"
@@ -648,6 +764,9 @@ def save_debug_dfs_detection(args, max_map, labels, clusters):
     else:
         # MATLAB 방식: 간단한 결과만
         save_debug_matlab_detection(args, max_map, labels, clusters, out_dir)
+    
+    # 추가: 좌표 그리드 이미지 저장 (모든 경우에)
+    save_coordinate_grid_image(args, max_map, clusters)
 
 def save_debug_python_detection(args, max_map, labels, clusters, out_dir):
     """Python 방식 detection의 상세 시각화"""
@@ -752,3 +871,74 @@ def save_debug_matlab_detection(args, max_map, labels, clusters, out_dir):
     plt.tight_layout()
     plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_matlab_detection.png", dpi=150)
     plt.close()
+
+def create_manual_clusters(max_map, manual_coords, args):
+    """
+    Create clusters from manually specified coordinates
+    Each coordinate is automatically expanded to 3x3 region
+    
+    Parameters:
+    -----------
+    max_map : np.ndarray
+        Maximum intensity map for reference
+    manual_coords : List[Tuple[int, int]]
+        List of (row, col) coordinates
+    args : dict
+        Configuration arguments
+    
+    Returns:
+    --------
+    labels : np.ndarray
+        Label map with manual particle locations (3x3 regions)
+    clusters : List[dict]
+        Cluster information for each manual coordinate
+    """
+    H, W = max_map.shape
+    labels = np.zeros((H, W), dtype=int)
+    clusters = []
+    
+    print(f"[info] Creating 3x3 clusters from {len(manual_coords)} manual coordinates")
+    
+    for i, (row, col) in enumerate(manual_coords):
+        # Validate center coordinates
+        if not (0 <= row < H and 0 <= col < W):
+            print(f"  [warning] Coordinate ({row}, {col}) out of bounds, skipping")
+            continue
+        
+        label = i + 1
+        
+        # Create 3x3 region around the coordinate
+        coords = []
+        for dr in [-1, 0, 1]:
+            for dc in [-1, 0, 1]:
+                r = row + dr
+                c = col + dc
+                if 0 <= r < H and 0 <= c < W:
+                    labels[r, c] = label
+                    coords.append([r, c])
+        
+        coords = np.array(coords)
+        
+        # Calculate cluster properties
+        intensities = max_map[coords[:, 0], coords[:, 1]]
+        
+        # Create cluster info
+        cluster = {
+            'label': label,
+            'coords': coords,
+            'size': len(coords),
+            'center': np.array([row, col]),  # Keep original coordinate as center
+            'max_intensity': intensities.max(),
+            'mean_intensity': intensities.mean(),
+            'manual': True  # Flag to indicate manual selection
+        }
+        
+        clusters.append(cluster)
+        
+        print(f"  Manual particle {label}: center=({row}, {col}), "
+              f"3x3 region with {len(coords)} pixels, "
+              f"max_intensity={intensities.max():.2f}")
+    
+    print(f"[info] Created {len(clusters)} manual 3x3 clusters")
+    
+    return labels, clusters
