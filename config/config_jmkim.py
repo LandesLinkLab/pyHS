@@ -42,7 +42,7 @@ args['FIG_DPI'] = 300
 # args['RSQ_MIN'] = 0.90
 
 # Manual mode (currently not used in new workflow)
-args['USE_MANUAL_COORDS'] = False
+args['USE_MANUAL_COORDS'] = True
 args['MANUAL_COORDS'] = [
 (30, 29),    #1
 (42, 27),    #2
@@ -65,7 +65,7 @@ args['MANUAL_COORDS'] = [
 (42, 134),    #19
 (21, 188),    #20
 (23, 176),    #21
-(31, 196),    #22
+(31, 196)    #22
 ]  # (Row, Col) format
 
 # Debug mode
