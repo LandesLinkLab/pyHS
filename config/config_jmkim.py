@@ -36,10 +36,11 @@ args['PARTICLE_UPPER_BOUND'] = 0.5    # MATLAB의 upper bound
 args['NHOOD_SIZE'] = 1                # MATLAB의 nhood (odd number)
 
 # Representative selection parameters (공통)
-args['PEAK_TOL_NM'] = 10.0  # FWHM tolerance for representative selection
+args['PEAK_TOL_NM'] = 3.0  # FWHM tolerance for representative selection
+args['MAX_WIDTH_NM'] = 59
+args['RSQ_MIN'] = 0.90
 args['FIT_RANGE_NM'] = (500, 850)  # Lorentzian fitting range
 args['FIG_DPI'] = 300
-# args['RSQ_MIN'] = 0.90
 
 # Manual mode (currently not used in new workflow)
 args['USE_MANUAL_COORDS'] = True

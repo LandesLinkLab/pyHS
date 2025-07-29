@@ -15,6 +15,7 @@ class SpectrumAnalyzer:
         self.dataset = dataset
         self.cluster_fits = []  # 모든 픽셀의 fitting 결과
         self.representatives = []  # 클러스터별 대표 스펙트럼
+        self.rejected_spectra = [] # Rejected spectra (for debugging)
         
     def run_spectrum(self):
         """
@@ -43,6 +44,13 @@ class SpectrumAnalyzer:
         # Integration size (MATLAB과 동일)
         int_size = 3
         int_var = (int_size - 1) // 2
+
+        max_width = self.args.get("MAX_WIDTH_NM", 59)
+
+        stats = {'total_clusters': len(self.dataset.clusters),
+                'rejected_width': 0,
+                'rejected_fitting': 0,
+                'accepted': 0}
         
         # 각 클러스터의 중심 픽셀에 대해 fitting
         for cluster in self.dataset.clusters:
@@ -75,7 +83,44 @@ class SpectrumAnalyzer:
             
             # Lorentzian fitting (보정된 데이터로 수행)
             y_fit, params, r2 = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
-            
+
+            fitted_width = params.get('c1', 0) # FWHM get
+
+            if fitted_width > max_width:
+
+                print(f"  [Rejected - Width] FWHM too large: {fitted_width:.1f} nm (max: {max_width:.1f} nm)")
+                stats['rejected_width'] += 1
+
+                # Save the rejected spectra
+                self.rejected_spectra.append({
+                    'cluster_label': cluster['label'],
+                    'row': center_row,
+                    'col': center_col,
+                    'spectrum': integrated_spectrum,
+                    'wavelengths': self.dataset.wvl,
+                    'reason': f"Width too large: {fitted_width: .1f} nm",
+                    'fitted_width': fitted_width
+                })
+                continue
+
+            # Check the RSQ value of fitting process
+            min_r2 = self.args.get("RSQ_MIN", 0.9)
+
+            if r2 < min_r2:
+                print(f"  [Rejected - Fitting] R² too low: {r2:.3f} (min: {min_r2})")
+                stats['rejected_fitting'] += 1
+                
+                self.rejected_spectra.append({
+                    'cluster_label': cluster['label'],
+                    'row': center_row,
+                    'col': center_col,
+                    'spectrum': integrated_spectrum,
+                    'wavelengths': self.dataset.wvl,
+                    'reason': f"R² too low: {r2:.3f}",
+                    'fitted_width': fitted_width
+                })
+                continue
+
             # MATLAB 방식 SNR 계산
             # 1. 노이즈: MATLAB과 동일하게 전체 범위에서 fitting 잔차의 표준편차
             resid = np.abs(integrated_spectrum - y_fit)  # 전체 범위의 잔차
@@ -88,6 +133,8 @@ class SpectrumAnalyzer:
             
             # 3. SNR
             snr = signal / noise
+
+            stats['accepted'] += 1
             
             # Store results
             result = {
@@ -114,7 +161,15 @@ class SpectrumAnalyzer:
             })
             
             print(f"  Integrated {pixel_count} pixels, peak at {result['peak_wl']:.1f} nm")
+            print(f"  FWHM: {fitted_width:.1f} nm (max allowed: {max_width:.1f} nm)")
             print(f"  SNR (MATLAB style): {snr:.1f} (raw signal: {signal:.1f}, noise: {noise:.3f})")
+
+        # Print the statistical results
+        print(f"\n[Filtering Statistics]")
+        print(f"  Total clusters: {stats['total_clusters']}")
+        print(f"  Rejected (width > {max_width:.0f} nm): {stats['rejected_width']}")
+        print(f"  Rejected (poor fit): {stats['rejected_fitting']}")
+        print(f"  Accepted: {stats['accepted']}")
     
     def select_representatives(self):
         """Select representative spectrum for each cluster"""
@@ -210,7 +265,7 @@ class SpectrumAnalyzer:
             header += f"# Peak: {rep['peak_wl']:.1f} nm, FWHM: {rep['fwhm']:.1f} nm, S/N: {rep['snr']:.1f}"
             
             np.savetxt(
-                out_dir / f"{self.dataset.sample_name}_particle_{i:03d}.txt",
+                out_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.txt",
                 data,
                 delimiter='\t',
                 header=header,
@@ -226,6 +281,7 @@ class SpectrumAnalyzer:
         print(f"Total clusters detected: {len(self.dataset.clusters) if self.dataset.clusters else 0}")
         print(f"Clusters analyzed: {len(self.cluster_fits)}")
         print(f"Valid representatives: {len(self.representatives)}")
+        print(f"Rejected spectra: {len(self.rejected_spectra)}")
         
         if self.representatives:
             # Statistics
@@ -251,6 +307,15 @@ class SpectrumAnalyzer:
             print(f"\nCluster sizes: {np.mean(cluster_sizes):.1f} ± {np.std(cluster_sizes):.1f} pixels")
             print(f"  Range: {min(cluster_sizes)} - {max(cluster_sizes)} pixels")
         
+        # Width rejection summary
+        if self.rejected_spectra:
+            width_rejected = [r for r in self.rejected_spectra if 'Width too large' in r['reason']]
+            if width_rejected:
+                widths = [r['fitted_width'] for r in width_rejected]
+                print(f"\n[Width Rejections]")
+                print(f"  Count: {len(width_rejected)}")
+                print(f"  Width range: {min(widths):.1f} - {max(widths):.1f} nm")
+        
         print("="*60)
     
     def dump_pkl(self):
@@ -265,6 +330,7 @@ class SpectrumAnalyzer:
             'clusters': self.dataset.clusters,
             'cluster_fits': self.cluster_fits,
             'representatives': self.representatives,
+            'rejected_spectra': self.rejected_spectra,
             'config': self.args,
             'analysis_date': str(datetime.now().strftime("%m-%d-%Y %H:%M:%S"))
         }
