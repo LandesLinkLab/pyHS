@@ -6,10 +6,10 @@ args = dict()
 
 # Basic settings
 args['SAMPLE_NAME'] = 'AuNR_PMMA'
-args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw')
+args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw_0716')
 args['WHITE_FILE'] = "wc.tdms"
 args['DARK_FILE'] = "dc.tdms"
-args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_jaekak_python_global_auto")
+args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_jaekak_python_global_manual_0716")
 
 # DFS-specific settings
 args['DFS_WL_RANGE'] = (500, 850)  # DFS max intensity map을 위한 범위
@@ -44,30 +44,30 @@ args['FIG_DPI'] = 300
 
 
 # Manual mode (currently not used in new workflow)
-args['USE_MANUAL_COORDS'] = False
+args['USE_MANUAL_COORDS'] = True
 args['MANUAL_COORDS'] = [
-(28, 9),    #1
-(38, 8),    #2
-(39, 19),    #3
-(29, 35),    #4
-(30, 53),    #5
-(12, 73),    #6
-(14, 73),    #7
-(36, 92),    #8
-(9, 110),    #9
-(9, 114),    #10
-(6, 128),    #11
-(10, 132),    #12
-(14, 142),    #13
-(21, 125),    #14
-(24, 122),    #15
-(28, 121),    #16
-(25, 149),    #17
-(34, 116),    #18
-(37, 114),    #19
-(16, 168),    #20
-(17, 156),    #21
-(25, 176)    #22
+(23, 60),    #1
+(35, 57),    #2
+(36, 68),    #3
+(27, 86),    #4
+(29, 114),    #5
+(13, 124),    #6
+(15, 124),    #7
+(39, 142),    #8
+(13, 162),    #9
+(13, 166),    #10
+(12, 180),    #11
+(16, 184),    #12
+(20, 193),    #13
+(27, 176),    #14
+(29, 172),    #15
+(33, 171),    #16
+(32, 199),    #17
+(38, 166),    #18
+(42, 164),    #19
+(24, 219),    #20
+(25, 309),    #21
+(34, 227)    #22
 ]  # (Row, Col) format
 
 # Debug mode

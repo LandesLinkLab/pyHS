@@ -6,7 +6,7 @@ args = dict()
 
 # Basic settings
 args['SAMPLE_NAME'] = 'AuNR_PMMA'
-args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw')
+args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw_0714')
 args['WHITE_FILE'] = "wc.tdms"
 args['DARK_FILE'] = "dc.tdms"
 args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_jaekak_python_global_auto")
