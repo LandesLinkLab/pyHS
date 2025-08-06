@@ -10,102 +10,153 @@ from typing import List, Dict, Tuple, Optional, Any, Union
 from . import spectrum_util as su
 
 class SpectrumAnalyzer:
+    """
+    Spectrum analysis class for DFS (Dark Field Scattering) hyperspectral data
+    
+    This class handles the complete spectral analysis pipeline:
+    1. Fitting Lorentzian functions to all detected particle spectra
+    2. Quality filtering based on fitting parameters (FWHM, R-squared)
+    3. Selecting representative spectra for each cluster
+    4. Generating plots and saving results
+    5. Computing statistics and creating summary reports
+    
+    The class works with preprocessed data from the Dataset class and applies
+    MATLAB-compatible analysis methods for consistency with existing workflows.
+    """
+    
     def __init__(self, args: Dict[str, Any], dataset):
+        """
+        Initialize SpectrumAnalyzer with configuration and preprocessed data
+        
+        Parameters:
+        -----------
+        args : Dict[str, Any]
+            Configuration dictionary containing analysis parameters:
+            - MAX_WIDTH_NM: Maximum allowed FWHM for filtering
+            - RSQ_MIN: Minimum R-squared value for fitting quality
+            - FIT_RANGE_NM: Wavelength range for Lorentzian fitting
+            - Output and visualization parameters
+        dataset : Dataset
+            Preprocessed dataset object containing hyperspectral cube,
+            wavelengths, detected clusters, and reference data
+        """
         self.args = args
         self.dataset = dataset
-        self.cluster_fits = []  # 모든 픽셀의 fitting 결과
-        self.representatives = []  # 클러스터별 대표 스펙트럼
-        self.rejected_spectra = [] # Rejected spectra (for debugging)
+        
+        # Results storage containers
+        self.cluster_fits = []  # All pixel fitting results organized by cluster
+        self.representatives = []  # Representative spectrum for each cluster
+        self.rejected_spectra = [] # Rejected spectra with reasons (for debugging)
         
     def run_spectrum(self):
         """
-        Spectrum analysis pipeline:
-        1. Fit all particles in clusters
-        2. Select representative spectra per cluster
-        3. Plot results
-        4. Save marking image and spectra
+        Execute the complete spectrum analysis pipeline
+        
+        This method runs all analysis steps in sequence:
+        1. Fit Lorentzian functions to all particle spectra
+        2. Apply quality filters and select representatives
+        3. Generate plots for each valid spectrum
+        4. Save particle map with markers
+        5. Export spectral data to text files
+        6. Create pickle dump of all results
+        7. Print comprehensive analysis summary
         """
-        self.fit_all_particles()
-        self.select_representatives()
-        self.plot_representatives()
-        self.save_dfs_particle_map()
-        self.save_spectra()
-        self.dump_pkl()
-        self.print_summary()
+        self.fit_all_particles()      # Step 1: Fit all detected particles
+        self.select_representatives() # Step 2: Select best spectrum per cluster
+        self.plot_representatives()   # Step 3: Generate individual spectrum plots
+        self.save_dfs_particle_map() # Step 4: Create annotated particle map
+        self.save_spectra()          # Step 5: Export data to text files
+        self.dump_pkl()              # Step 6: Save all results to pickle file
+        self.print_summary()         # Step 7: Print comprehensive summary
     
     def fit_all_particles(self):
-        """Fit Lorentzian to all particles in all clusters"""
+        """
+        Fit Lorentzian functions to all detected particle clusters
+        
+        This method:
+        - Integrates 3x3 pixel regions around each cluster center
+        - Fits Lorentzian functions to the integrated spectra
+        - Applies quality filters based on FWHM and R-squared values
+        - Computes MATLAB-style Signal-to-Noise ratios
+        - Stores both accepted and rejected results for analysis
+        
+        The fitting uses the background-corrected spectral data and follows
+        MATLAB-compatible methods for consistency with existing analysis.
+        """
         print("\n[Step] Fitting all particles in clusters...")
         
         if not self.dataset.clusters:
             print("[warning] No clusters found for analysis")
             return
         
-        # Integration size (MATLAB과 동일)
+        # Integration parameters (MATLAB-compatible 3x3 integration)
         int_size = 3
-        int_var = (int_size - 1) // 2
+        int_var = (int_size - 1) // 2  # Half-width of integration region
 
-        max_width = self.args.get("MAX_WIDTH_NM", 59)
+        # Quality filter parameters
+        max_width = self.args.get("MAX_WIDTH_NM", 59)  # Maximum allowed FWHM
+        min_r2 = self.args.get("RSQ_MIN", 0.9)         # Minimum R-squared
 
+        # Statistics tracking
         stats = {'total_clusters': len(self.dataset.clusters),
                 'rejected_width': 0,
                 'rejected_fitting': 0,
                 'accepted': 0}
         
-        # 각 클러스터의 중심 픽셀에 대해 fitting
+        # Process each detected cluster
         for cluster in self.dataset.clusters:
             cluster_results = []
             
             print(f"\n[Fitting Cluster {cluster['label']}] - {cluster['size']} pixels")
             
-            # 클러스터 중심 사용
+            # Use cluster center for integration
             center_row = int(cluster['center'][0])
             center_col = int(cluster['center'][1])
             
-            # 3x3 픽셀 통합 (보정된 데이터와 raw 데이터 모두)
+            # Integrate spectrum over 3x3 pixel region (MATLAB-style)
             H, W, L = self.dataset.cube.shape
             integrated_spectrum = np.zeros(L)
             pixel_count = 0
             
+            # Sum spectra from 3x3 region around center
             for m in range(-int_var, int_var + 1):
                 for l in range(-int_var, int_var + 1):
                     row = center_row + m
                     col = center_col + l
                     
-                    # 경계 체크
+                    # Check boundaries
                     if 0 <= row < H and 0 <= col < W:
                         integrated_spectrum += self.dataset.cube[row, col, :]
                         pixel_count += 1
             
-            # Skip if no valid pixels
+            # Skip if no valid pixels or very low signal
             if pixel_count == 0 or integrated_spectrum.max() < 0.01:
                 continue
             
-            # Lorentzian fitting (보정된 데이터로 수행)
+            # Fit Lorentzian function to integrated spectrum
             y_fit, params, r2 = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
 
-            fitted_width = params.get('c1', 0) # FWHM get
+            # Extract fitted FWHM for quality filtering
+            fitted_width = params.get('c1', 0) # FWHM parameter
 
+            # Quality Filter 1: FWHM limit
             if fitted_width > max_width:
-
                 print(f"  [Rejected - Width] FWHM too large: {fitted_width:.1f} nm (max: {max_width:.1f} nm)")
                 stats['rejected_width'] += 1
 
-                # Save the rejected spectra
+                # Store rejected spectrum with reason
                 self.rejected_spectra.append({
                     'cluster_label': cluster['label'],
                     'row': center_row,
                     'col': center_col,
                     'spectrum': integrated_spectrum,
                     'wavelengths': self.dataset.wvl,
-                    'reason': f"Width too large: {fitted_width: .1f} nm",
+                    'reason': f"Width too large: {fitted_width:.1f} nm",
                     'fitted_width': fitted_width
                 })
                 continue
 
-            # Check the RSQ value of fitting process
-            min_r2 = self.args.get("RSQ_MIN", 0.9)
-
+            # Quality Filter 2: R-squared limit
             if r2 < min_r2:
                 print(f"  [Rejected - Fitting] R² too low: {r2:.3f} (min: {min_r2})")
                 stats['rejected_fitting'] += 1
@@ -121,22 +172,22 @@ class SpectrumAnalyzer:
                 })
                 continue
 
-            # MATLAB 방식 SNR 계산
-            # 1. 노이즈: MATLAB과 동일하게 전체 범위에서 fitting 잔차의 표준편차
-            resid = np.abs(integrated_spectrum - y_fit)  # 전체 범위의 잔차
+            # Compute MATLAB-style Signal-to-Noise Ratio
+            # 1. Noise: standard deviation of fitting residuals over full range
+            resid = np.abs(integrated_spectrum - y_fit)  # Absolute residuals
             noise = np.std(resid)
             
-            # 2. 신호: 공명 파장에서의 RAW 데이터 값
+            # 2. Signal: raw data value at resonance wavelength
             resonance_wl = params.get('b1', self.dataset.wvl[np.argmax(integrated_spectrum)])
             resonance_idx = np.argmin(np.abs(self.dataset.wvl - resonance_wl))
             signal = integrated_spectrum[resonance_idx]
             
-            # 3. SNR
-            snr = signal / noise
+            # 3. SNR calculation
+            snr = signal / noise if noise > 0 else 0
 
             stats['accepted'] += 1
             
-            # Store results
+            # Store successful fitting results
             result = {
                 'row': center_row,
                 'col': center_col,
@@ -148,23 +199,25 @@ class SpectrumAnalyzer:
                 'peak_wl': params.get('b1', self.dataset.wvl[resonance_idx]),
                 'fwhm': params.get('c1', 0),
                 'peak_intensity': integrated_spectrum[resonance_idx],
-                'raw_peak_intensity': signal,  # Raw 신호값 저장
+                'raw_peak_intensity': signal,  # Store raw signal value
                 'integrated_pixels': pixel_count
             }
             
             cluster_results.append(result)
             
+            # Store cluster fitting results
             self.cluster_fits.append({
                 'cluster_label': cluster['label'],
                 'cluster_size': cluster['size'],
                 'fits': cluster_results
             })
             
+            # Print fitting summary for this cluster
             print(f"  Integrated {pixel_count} pixels, peak at {result['peak_wl']:.1f} nm")
             print(f"  FWHM: {fitted_width:.1f} nm (max allowed: {max_width:.1f} nm)")
             print(f"  SNR (MATLAB style): {snr:.1f} (raw signal: {signal:.1f}, noise: {noise:.3f})")
 
-        # Print the statistical results
+        # Print overall filtering statistics
         print(f"\n[Filtering Statistics]")
         print(f"  Total clusters: {stats['total_clusters']}")
         print(f"  Rejected (width > {max_width:.0f} nm): {stats['rejected_width']}")
@@ -172,7 +225,17 @@ class SpectrumAnalyzer:
         print(f"  Accepted: {stats['accepted']}")
     
     def select_representatives(self):
-        """Select representative spectrum for each cluster"""
+        """
+        Select representative spectrum for each cluster
+        
+        Since we now use one integrated spectrum per cluster (3x3 integration),
+        this method simply selects that single spectrum as the representative.
+        In more complex scenarios, this could involve selecting the best spectrum
+        from multiple fits per cluster.
+        
+        The method stores detailed information about each representative including
+        spectral parameters, quality metrics, and spatial information.
+        """
         print("\n[Step] Selecting representative spectra for each cluster...")
         
         for cluster_fit in self.cluster_fits:
@@ -182,9 +245,10 @@ class SpectrumAnalyzer:
                 print(f"  Cluster {cluster_fit['cluster_label']}: No valid fits")
                 continue
             
-            # 이제 클러스터당 하나의 fit만 있음
+            # Currently only one fit per cluster (3x3 integration)
             best = fits[0]
             
+            # Print representative information
             print(f"\n  Cluster {cluster_fit['cluster_label']}:")
             print(f"    Center: ({best['row']}, {best['col']})")
             print(f"    Integrated pixels: {best['integrated_pixels']}")
@@ -192,6 +256,7 @@ class SpectrumAnalyzer:
             print(f"    FWHM: {best['fwhm']:.1f} nm")
             print(f"    S/N: {best['snr']:.1f}, R²: {best['r2']:.3f}")
             
+            # Store as representative
             self.representatives.append({
                 'cluster_label': cluster_fit['cluster_label'],
                 'cluster_size': cluster_fit['cluster_size'],
@@ -211,69 +276,116 @@ class SpectrumAnalyzer:
         print(f"\n[Summary] {len(self.representatives)} valid representatives from {len(self.cluster_fits)} clusters")
     
     def plot_representatives(self):
-        """Plot representative spectra"""
+        """
+        Generate individual spectrum plots for each representative
+        
+        This method:
+        - Creates MATLAB-style plots for each valid representative spectrum
+        - Shows both experimental data and Lorentzian fit
+        - Includes key parameters (wavelength, FWHM, SNR) as text annotations
+        - Saves high-resolution plots to the output directory
+        - Uses consistent styling and formatting for all plots
+        """
         print("\n[Step] Plotting representative spectra...")
         
         out_dir = Path(self.args['OUTPUT_DIR'])
         out_dir.mkdir(parents=True, exist_ok=True)
         
         for i, rep in enumerate(self.representatives):
-            # Plot spectrum
+            # Generate sequential particle numbers for consistent naming
             particle_num = i + 1
+            
+            # Create individual spectrum plot using utility function
             su.plot_spectrum(
-                self.dataset.wvl,
-                rep['spectrum'],
-                rep['fit'],
-                f"Particle {particle_num} (Cluster {rep['cluster_label']})",
-                out_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.png",
-                dpi=self.args["FIG_DPI"],
-                params=rep['params'],
-                snr=rep['snr'],
-                args=self.args
+                self.dataset.wvl,           # Wavelength array
+                rep['spectrum'],            # Experimental spectrum
+                rep['fit'],                 # Lorentzian fit
+                f"Particle {particle_num} (Cluster {rep['cluster_label']})", # Title
+                out_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.png", # Output path
+                dpi=self.args["FIG_DPI"],   # Resolution
+                params=rep['params'],       # Fitting parameters
+                snr=rep['snr'],            # Signal-to-noise ratio
+                args=self.args             # Additional configuration
             )
     
     def save_dfs_particle_map(self):
-        """Save particle map with markers"""
+        """
+        Save annotated particle map showing all detected and analyzed particles
+        
+        This method:
+        - Uses the max intensity map before background correction for better visibility
+        - Marks each representative particle with numbered annotations
+        - Shows resonance wavelengths and cluster information
+        - Creates a publication-ready figure with proper scaling and coloring
+        - Saves to the main output directory for easy access
+        """
         if not self.representatives:
             return
         
         out_dir = Path(self.args['OUTPUT_DIR'])
         output_path = out_dir / f"{self.dataset.sample_name}_dfs_markers.png"
 
+        # Use max map before background correction if available (better contrast)
         display_map = self.dataset.max_map_before_bg if hasattr(self.dataset, 'max_map_before_bg') else self.dataset.max_map
         
+        # Generate particle map using utility function
         su.save_dfs_particle_map(
-            display_map,
-            self.representatives,
-            output_path,
-            self.dataset.sample_name
+            display_map,              # Background intensity map
+            self.representatives,     # Representative particles to mark
+            output_path,             # Output file path
+            self.dataset.sample_name # Sample name for title
         )
     
     def save_spectra(self):
-        """Save spectra data to text files"""
+        """
+        Export spectral data to tab-separated text files
+        
+        This method:
+        - Creates a 'spectra' subdirectory in the output folder
+        - Saves each representative spectrum as a separate text file
+        - Includes wavelength, intensity, and fit data in columns
+        - Adds metadata headers with particle information and fitting parameters
+        - Uses consistent naming convention for easy identification
+        """
         print("\n[Step] Saving spectra data...")
         
         out_dir = Path(self.args['OUTPUT_DIR']) / "spectra"
         out_dir.mkdir(parents=True, exist_ok=True)
         
         for i, rep in enumerate(self.representatives):
-            # Save spectrum data
+            # Generate sequential particle numbers
             particle_num = i + 1
+            
+            # Prepare data array: wavelength, intensity, fit
             data = np.column_stack((self.dataset.wvl, rep['spectrum'], rep['fit']))
+            
+            # Create informative header with metadata
             header = f"Wavelength(nm)\tIntensity\tFit\n"
             header += f"# Particle {particle_num}, Cluster {rep['cluster_label']}, Position ({rep['row']},{rep['col']})\n"
             header += f"# Peak: {rep['peak_wl']:.1f} nm, FWHM: {rep['fwhm']:.1f} nm, S/N: {rep['snr']:.1f}"
             
+            # Save to text file with tab separation
             np.savetxt(
                 out_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.txt",
                 data,
                 delimiter='\t',
                 header=header,
-                fmt='%.3f'
+                fmt='%.3f'  # 3 decimal places
             )
     
     def print_summary(self):
-        """Print analysis summary"""
+        """
+        Print comprehensive analysis summary with statistics
+        
+        This method provides a detailed summary including:
+        - Basic counts of detected, analyzed, and valid particles
+        - Statistical analysis of key parameters (wavelength, FWHM, SNR, R²)
+        - Quality metrics and filtering results
+        - Information about rejected spectra and reasons
+        - Cluster size distribution
+        
+        The summary is formatted for easy reading and interpretation.
+        """
         print("\n" + "="*60)
         print("DFS ANALYSIS SUMMARY")
         print("="*60)
@@ -284,30 +396,35 @@ class SpectrumAnalyzer:
         print(f"Rejected spectra: {len(self.rejected_spectra)}")
         
         if self.representatives:
-            # Statistics
+            # Extract parameters for statistical analysis
             wavelengths = [r['peak_wl'] for r in self.representatives]
             fwhms = [r['fwhm'] for r in self.representatives if r['fwhm'] > 0]
             snrs = [r['snr'] for r in self.representatives]
             cluster_sizes = [r['cluster_size'] for r in self.representatives]
             r2s = [r['r2'] for r in self.representatives]
             
+            # Resonance wavelength statistics
             print(f"\nResonance wavelength: {np.mean(wavelengths):.1f} ± {np.std(wavelengths):.1f} nm")
             print(f"  Range: {min(wavelengths):.1f} - {max(wavelengths):.1f} nm")
             
+            # FWHM statistics
             if fwhms:
                 print(f"\nFWHM: {np.mean(fwhms):.1f} ± {np.std(fwhms):.1f} nm")
                 print(f"  Range: {min(fwhms):.1f} - {max(fwhms):.1f} nm")
             
+            # Signal-to-noise ratio statistics
             print(f"\nS/N ratio: {np.mean(snrs):.1f} ± {np.std(snrs):.1f}")
             print(f"  Range: {min(snrs):.1f} - {max(snrs):.1f}")
             
+            # R-squared statistics (fitting quality)
             print(f"\nR² values: {np.mean(r2s):.3f} ± {np.std(r2s):.3f}")
             print(f"  Range: {min(r2s):.3f} - {max(r2s):.3f}")
             
+            # Cluster size statistics
             print(f"\nCluster sizes: {np.mean(cluster_sizes):.1f} ± {np.std(cluster_sizes):.1f} pixels")
             print(f"  Range: {min(cluster_sizes)} - {max(cluster_sizes)} pixels")
         
-        # Width rejection summary
+        # Rejection analysis
         if self.rejected_spectra:
             width_rejected = [r for r in self.rejected_spectra if 'Width too large' in r['reason']]
             if width_rejected:
@@ -319,9 +436,22 @@ class SpectrumAnalyzer:
         print("="*60)
     
     def dump_pkl(self):
-        """Save all results to pickle file"""
+        """
+        Save all analysis results to a comprehensive pickle file
+        
+        This method:
+        - Creates a complete data package with all results and metadata
+        - Includes original configuration parameters for reproducibility
+        - Stores both successful and rejected analysis results
+        - Adds timestamp and sample information
+        - Uses highest protocol for efficient storage
+        
+        The pickle file serves as a complete record of the analysis and can be
+        loaded later for further processing or comparison with other samples.
+        """
         out = Path(self.args['OUTPUT_DIR']) / f"{self.dataset.sample_name}_results.pkl"
         
+        # Create comprehensive data package
         payload = {
             'sample': self.dataset.sample_name,
             'wavelengths': self.dataset.wvl,
@@ -335,6 +465,7 @@ class SpectrumAnalyzer:
             'analysis_date': str(datetime.now().strftime("%m-%d-%Y %H:%M:%S"))
         }
         
+        # Save with highest compression
         with open(out, "wb") as f:
             pkl.dump(payload, f, protocol=pkl.HIGHEST_PROTOCOL)
         
