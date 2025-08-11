@@ -713,4 +713,454 @@ def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_c
         
         # Define local background search parameters
         search_radius = args.get('BACKGROUND_LOCAL_SEARCH_RADIUS', 20)
-        percentile = args.get('BACKGROUND_LOCAL_PERCENTILE',
+        percentile = args.get('BACKGROUND_LOCAL_PERCENTILE', 1)
+        
+        # Define search region around cluster center
+        row_center, col_center = int(center[0]), int(center[1])
+        row_min = max(0, row_center - search_radius)
+        row_max = min(H, row_center + search_radius)
+        col_min = max(0, col_center - search_radius)
+        col_max = min(W, col_center + search_radius)
+        
+        # Find pixels with low intensity sum in search region (using flatfield-corrected data)
+        search_region = cube[row_min:row_max, col_min:col_max, :]
+        intensity_map = search_region.sum(axis=2)
+        
+        # Exclude 3x3 cluster region from background calculation
+        mask = np.ones(intensity_map.shape, dtype=bool)
+        
+        # Exclude all pixels in 3x3 region from mask
+        for m in range(-int_var, int_var + 1):
+            for l in range(-int_var, int_var + 1):
+                local_r = row_center + m - row_min
+                local_c = col_center + l - col_min
+                if 0 <= local_r < mask.shape[0] and 0 <= local_c < mask.shape[1]:
+                    mask[local_r, local_c] = False
+        
+        # Select darkest pixels for background
+        masked_intensity = intensity_map[mask]
+        if len(masked_intensity) > 0:
+            threshold = np.percentile(masked_intensity, percentile)
+            dark_pixels = np.where((intensity_map <= threshold) & mask)
+            
+            if len(dark_pixels[0]) > 0:
+                # Calculate background from RAW data
+                background_raw = np.zeros(L)
+                for i in range(len(dark_pixels[0])):
+                    global_r = dark_pixels[0][i] + row_min
+                    global_c = dark_pixels[1][i] + col_min
+                    background_raw += raw_cube[global_r, global_c, :]  # Use RAW data!
+                
+                background_raw /= len(dark_pixels[0])
+                
+                print(f"  Cluster {cluster['label']}: Using {len(dark_pixels[0])} pixels for local background")
+                print(f"    Raw background range: [{background_raw.min():.1f}, {background_raw.max():.1f}]")
+                
+                # Apply same processing to entire 3x3 region
+                pixels_corrected = 0
+                for m in range(-int_var, int_var + 1):
+                    for l in range(-int_var, int_var + 1):
+                        r = row_center + m
+                        c = col_center + l
+                        
+                        # Check boundaries
+                        if 0 <= r < H and 0 <= c < W:
+                            # Subtract background from raw data
+                            signal_raw = raw_cube[r, c, :] - background_raw
+                            
+                            # Apply row-specific flatfield
+                            if r < white_ref.shape[0]:
+                                flatfield = (white_ref[r, 0, :] - dark_ref[r, 0, :])
+                            else:
+                                flatfield = (white_ref[-1, 0, :] - dark_ref[-1, 0, :])
+                            
+                            denominator = np.where(flatfield > 0, flatfield, 1.0)
+                            corrected[r, c, :] = np.maximum(signal_raw / denominator, 0)
+                            pixels_corrected += 1
+                
+                print(f"    Applied to {pixels_corrected} pixels in 3x3 region")
+                
+            else:
+                print(f"  Cluster {cluster['label']}: No suitable background pixels nearby")
+        else:
+            print(f"  Cluster {cluster['label']}: No valid pixels in search region")
+    
+    print(f"[debug] After local background correction: range [{corrected.min():.3f}, {corrected.max():.3f}]")
+    
+    return corrected
+
+def save_debug_image(args, img, name, cmap='hot'):
+    """
+    Save debug image to output directory
+    
+    Parameters:
+    -----------
+    args : dict
+        Configuration with OUTPUT_DIR and SAMPLE_NAME
+    img : np.ndarray
+        Image data to save
+    name : str
+        Image name (without extension)
+    cmap : str
+        Matplotlib colormap name
+    """
+    out_dir = Path(args['OUTPUT_DIR']) / "debug"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    if img.ndim == 3:  # RGB image
+        ax.imshow(img, origin='lower')
+        ax.set_title(f"{name} (RGB)")
+    else:  # Grayscale image
+        im = ax.imshow(img, cmap=cmap, origin='lower')
+        plt.colorbar(im, ax=ax)
+        ax.set_title(f"{name} (range: [{img.min():.2f}, {img.max():.2f}])")
+    
+    ax.set_xlabel('X (pixels)')
+    ax.set_ylabel('Y (pixels)')
+    
+    plt.tight_layout()
+    plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_{name}.png", dpi=150)
+    plt.close()
+
+def save_coordinate_grid_image(args, max_map):
+    """
+    Save debug image with coordinate grid for manual coordinate selection
+    
+    This function creates a reference image with coordinate grids that helps
+    users manually select particle coordinates for analysis.
+    
+    Parameters:
+    -----------
+    args : dict
+        Configuration arguments with OUTPUT_DIR and SAMPLE_NAME
+    max_map : np.ndarray
+        Background-corrected maximum intensity map for better visibility
+    """
+    out_dir = Path(args['OUTPUT_DIR']) / "debug"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    fig, ax = plt.subplots(figsize=(14, 10))
+    
+    # Display the max intensity map
+    im = ax.imshow(max_map, cmap='hot', origin='lower')
+    plt.colorbar(im, ax=ax, label='Intensity')
+    
+    # Get image dimensions
+    H, W = max_map.shape
+    
+    # Set up major and minor grid lines
+    # Major grid every 10 pixels
+    major_interval = 10
+    major_x = np.arange(0, W, major_interval)
+    major_y = np.arange(0, H, major_interval)
+    
+    # Minor grid every 1 pixel
+    minor_interval = 1
+    minor_x = np.arange(0, W, minor_interval)
+    minor_y = np.arange(0, H, minor_interval)
+    
+    # Draw grid lines
+    # Major grid lines (thicker, more visible)
+    for x in major_x:
+        ax.axvline(x, color='white', linewidth=0.8, alpha=0.5)
+    for y in major_y:
+        ax.axhline(y, color='white', linewidth=0.8, alpha=0.5)
+    
+    # Minor grid lines (thinner, less visible)
+    for x in minor_x:
+        if x % major_interval != 0:  # Skip major grid positions
+            ax.axvline(x, color='white', linewidth=0.4, alpha=0.3, linestyle='--')
+    for y in minor_y:
+        if y % major_interval != 0:
+            ax.axhline(y, color='white', linewidth=0.4, alpha=0.3, linestyle='--')
+    
+    # Set tick labels (show every 10 pixels)
+    ax.set_xticks(major_x)
+    ax.set_yticks(major_y)
+    ax.set_xticklabels(major_x)
+    ax.set_yticklabels(major_y)
+    
+    # Add minor ticks without labels
+    ax.set_xticks(minor_x, minor=True)
+    ax.set_yticks(minor_y, minor=True)
+    
+    # Styling for better visibility
+    ax.tick_params(axis='both', which='major', labelsize=10, color='white', labelcolor='yellow')
+    ax.tick_params(axis='both', which='minor', size=3)
+    
+    # Set axis limits to show full image
+    ax.set_xlim(-0.5, W - 0.5)
+    ax.set_ylim(-0.5, H - 0.5)
+    
+    # Labels and title
+    ax.set_xlabel('X (column)', fontsize=12, color='yellow', fontweight='bold')
+    ax.set_ylabel('Y (row)', fontsize=12, color='yellow', fontweight='bold')
+    ax.set_title(f'{args["SAMPLE_NAME"]} - Coordinate Grid (Background Corrected)', 
+                fontsize=14, pad=10)
+    
+    # Add helper text for coordinate format
+    help_text = "Grid: Major lines every 10 pixels, minor lines every 5 pixels\n"
+    help_text += "Coordinates format: (row, col)"
+    ax.text(0.02, 0.98, help_text, 
+           transform=ax.transAxes, 
+           verticalalignment='top',
+           fontsize=10,
+           color='yellow',
+           bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
+    
+    # Save figure
+    plt.tight_layout()
+    output_path = out_dir / f"{args['SAMPLE_NAME']}_coordinate_grid.png"
+    plt.savefig(output_path, dpi=150, facecolor='black')
+    plt.close()
+    
+    print(f"[info] Saved coordinate grid image: {output_path}")
+
+def save_debug_dfs_detection(args, max_map, labels, clusters):
+    """
+    Save debug images showing particle detection results
+    
+    Parameters:
+    -----------
+    args : dict
+        Configuration with detection style and output settings
+    max_map : np.ndarray
+        Maximum intensity map
+    labels : np.ndarray
+        Labeled image from particle detection
+    clusters : list
+        List of detected cluster information
+    """
+    out_dir = Path(args['OUTPUT_DIR']) / "debug"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Choose visualization based on detection style
+    detection_style = args.get('PARTICLE_DETECTION_STYLE', 'python')
+    
+    if detection_style == 'python':
+        # Python style: detailed threshold process visualization
+        save_debug_python_detection(args, max_map, labels, clusters, out_dir)
+    else:
+        # MATLAB style: simple result visualization
+        save_debug_matlab_detection(args, max_map, labels, clusters, out_dir)
+
+
+def save_debug_python_detection(args, max_map, labels, clusters, out_dir):
+    """
+    Create detailed visualization for Python-style particle detection process
+    
+    Shows the complete threshold-based detection pipeline including:
+    - Original max intensity map
+    - Normalized map
+    - Histogram with thresholds
+    - Binary mask after threshold
+    - Result after morphological operations
+    - Final labeled clusters
+    
+    Parameters:
+    -----------
+    args : dict
+        Configuration parameters
+    max_map : np.ndarray
+        Maximum intensity map
+    labels : np.ndarray
+        Final labeled image
+    clusters : list
+        Detected cluster information
+    out_dir : Path
+        Output directory for debug images
+    """
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    axes = axes.ravel()
+    
+    # 1. Original max intensity map
+    im1 = axes[0].imshow(max_map, cmap='hot', origin='lower')
+    axes[0].set_title('1. Max Intensity Map')
+    plt.colorbar(im1, ax=axes[0])
+    
+    # 2. Normalized map
+    normalized = (max_map - max_map.min()) / (max_map.max() - max_map.min() + 1e-10)
+    im2 = axes[1].imshow(normalized, cmap='hot', origin='lower')
+    axes[1].set_title('2. Normalized Map')
+    plt.colorbar(im2, ax=axes[1])
+    
+    # 3. Histogram with threshold visualization
+    threshold = args.get('DFS_INTENSITY_THRESHOLD', 0.1)
+    try:
+        from skimage.filters import threshold_otsu
+        otsu_val = threshold_otsu(normalized)
+        actual_threshold = min(threshold, otsu_val * 0.8)
+        
+        # Create histogram with threshold lines
+        axes[2].hist(normalized.ravel(), bins=100, alpha=0.7, color='blue')
+        axes[2].axvline(actual_threshold, color='red', linestyle='--', linewidth=2, label=f'Used: {actual_threshold:.3f}')
+        axes[2].axvline(otsu_val, color='green', linestyle='--', linewidth=2, label=f'Otsu: {otsu_val:.3f}')
+        axes[2].axvline(threshold, color='orange', linestyle='--', linewidth=2, label=f'Manual: {threshold:.3f}')
+        axes[2].set_title('3. Histogram with Thresholds')
+        axes[2].set_xlabel('Normalized Intensity')
+        axes[2].set_ylabel('Count')
+        axes[2].legend()
+        axes[2].set_yscale('log')
+    except:
+        actual_threshold = threshold
+        axes[2].text(0.5, 0.5, 'Otsu failed', ha='center', va='center', transform=axes[2].transAxes)
+        axes[2].set_title('3. Histogram (Otsu failed)')
+    
+    # 4. Binary mask after threshold
+    mask = normalized > actual_threshold
+    axes[3].imshow(mask, cmap='gray', origin='lower')
+    axes[3].set_title(f'4. Binary Mask (threshold={actual_threshold:.3f})')
+    pixels_above = mask.sum()
+    axes[3].text(0.02, 0.98, f'Pixels: {pixels_above}', transform=axes[3].transAxes, 
+                verticalalignment='top', color='yellow', fontsize=10)
+    
+    # 5. After morphological operations
+    from skimage.morphology import binary_closing, remove_small_objects, footprint_rectangle
+    mask_morph = binary_closing(mask, footprint_rectangle((3, 3)))
+    min_size = max(2, args.get("MIN_PIXELS_CLUS", 4) // 2)
+    mask_morph = remove_small_objects(mask_morph, min_size)
+    axes[4].imshow(mask_morph, cmap='gray', origin='lower')
+    axes[4].set_title(f'5. After Morphology (min_size={min_size})')
+    
+    # 6. Final labeled clusters with annotations
+    im6 = axes[5].imshow(labels, cmap='tab20', origin='lower')
+    axes[5].set_title(f'6. Final Clusters (n={len(clusters)})')
+    
+    # Mark cluster centers and information
+    for cluster in clusters:
+        center = cluster['center']
+        axes[5].plot(center[1], center[0], 'w+', markersize=10, markeredgewidth=2)
+        axes[5].text(center[1]+2, center[0]+2, f"{cluster['label']}\n{cluster['size']}px", 
+                    color='white', fontsize=8, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
+    
+    # Add grid to all subplots for better readability
+    for ax in axes:
+        ax.set_xlabel('X (pixels)')
+        ax.set_ylabel('Y (pixels)')
+        ax.grid(True, alpha=0.3, linestyle='--')
+    
+    plt.suptitle(f'Python-style Particle Detection Debug - {args["SAMPLE_NAME"]}', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_python_detection_debug.png", dpi=150)
+    plt.close()
+
+def save_debug_matlab_detection(args, max_map, labels, clusters, out_dir):
+    """
+    Create simple visualization for MATLAB-style particle detection results
+    
+    Shows only the input and output since MATLAB-style detection is complex
+    multi-threshold process that's difficult to visualize step-by-step.
+    
+    Parameters:
+    -----------
+    args : dict
+        Configuration parameters
+    max_map : np.ndarray
+        Maximum intensity map
+    labels : np.ndarray
+        Final labeled image
+    clusters : list
+        Detected cluster information  
+    out_dir : Path
+        Output directory
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    
+    # 1. Original max intensity map
+    im1 = ax1.imshow(max_map, cmap='hot', origin='lower')
+    ax1.set_title('Max Intensity Map')
+    plt.colorbar(im1, ax=ax1)
+    
+    # 2. Detected particles
+    ax2.imshow(labels, cmap='tab20', origin='lower')
+    ax2.set_title(f'MATLAB-style Detection (n={len(clusters)} particles)')
+    
+    # Mark detected particles
+    for cluster in clusters:
+        center = cluster['center']
+        ax2.plot(center[1], center[0], 'w+', markersize=8, markeredgewidth=1)
+    
+    # Add grid for both subplots
+    for ax in [ax1, ax2]:
+        ax.set_xlabel('X (pixels)')
+        ax.set_ylabel('Y (pixels)')
+        ax.grid(True, alpha=0.3, linestyle='--')
+    
+    plt.tight_layout()
+    plt.savefig(out_dir / f"{args['SAMPLE_NAME']}_matlab_detection.png", dpi=150)
+    plt.close()
+
+def create_manual_clusters(max_map, manual_coords, args):
+    """
+    Create particle clusters from manually specified coordinates
+    
+    This function takes user-specified coordinates and automatically creates
+    3x3 clusters around each point for consistent analysis.
+    
+    Parameters:
+    -----------
+    max_map : np.ndarray
+        Maximum intensity map for reference and intensity calculation
+    manual_coords : List[Tuple[int, int]]
+        List of (row, col) coordinates specified by user
+    args : dict
+        Configuration arguments
+    
+    Returns:
+    --------
+    Tuple[np.ndarray, List[dict]]
+        (label map with 3x3 regions, cluster information list)
+    """
+    H, W = max_map.shape
+    labels = np.zeros((H, W), dtype=int)
+    clusters = []
+    
+    print(f"[info] Creating 3x3 clusters from {len(manual_coords)} manual coordinates")
+    
+    for i, (row, col) in enumerate(manual_coords):
+        # Validate that center coordinates are within image bounds
+        if not (0 <= row < H and 0 <= col < W):
+            print(f"  [warning] Coordinate ({row}, {col}) out of bounds, skipping")
+            continue
+        
+        label = i + 1
+        
+        # Create 3x3 region around the specified coordinate
+        coords = []
+        for dr in [-1, 0, 1]:  # Row offsets: -1, 0, +1
+            for dc in [-1, 0, 1]:  # Column offsets: -1, 0, +1
+                r = row + dr
+                c = col + dc
+                # Only include pixels within image boundaries
+                if 0 <= r < H and 0 <= c < W:
+                    labels[r, c] = label
+                    coords.append([r, c])
+        
+        coords = np.array(coords)
+        
+        # Calculate cluster properties from the max intensity map
+        intensities = max_map[coords[:, 0], coords[:, 1]]
+        
+        # Create cluster information dictionary
+        cluster = {
+            'label': label,
+            'coords': coords,
+            'size': len(coords),
+            'center': np.array([row, col]),  # Keep original coordinate as center
+            'max_intensity': intensities.max(),
+            'mean_intensity': intensities.mean(),
+            'manual': True  # Flag to indicate this was manually selected
+        }
+        
+        clusters.append(cluster)
+        
+        print(f"  Manual particle {label}: center=({row}, {col}), "
+              f"3x3 region with {len(coords)} pixels, "
+              f"max_intensity={intensities.max():.2f}")
+    
+    print(f"[info] Created {len(clusters)} manual 3x3 clusters")
+    
+    return labels, clusters
