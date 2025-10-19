@@ -15,7 +15,7 @@ args['SAMPLE_NAME'] = 'AuNR_PMMA'  # Name of the main TDMS file (without .tdms e
 args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw_jmkim')  # Directory containing TDMS files
 args['WHITE_FILE'] = "wc.tdms"     # White reference file name for flatfield correction
 args['DARK_FILE'] = "dc.tdms"      # Dark reference file name for flatfield correction
-args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_python_global")  # Output directory for all results
+args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_dfs_output")  # Output directory for DFS results
 
 # ============================================================================
 # DFS (DARK FIELD SCATTERING) SPECIFIC SETTINGS
@@ -66,7 +66,7 @@ args['NHOOD_SIZE'] = 1                # Neighborhood size for edge exclusion (mu
 # ============================================================================
 # SPECTRAL ANALYSIS AND FITTING PARAMETERS
 # ============================================================================
-# Representative selection parameters (common to all detection methods)
+# Representative selection parameters
 args['PEAK_TOL_NM'] = 3.0     # Wavelength tolerance (nm) for grouping similar peaks
                                # Currently not actively used but available for advanced filtering
 
@@ -126,27 +126,3 @@ args['MANUAL_COORDS'] = [
 args['DEBUG'] = True  # Enable debug mode for additional output and intermediate file saving
                        # When True, creates debug images and verbose console output
                        # Set to False for production runs to reduce output volume
-
-# ============================================================================
-# CONFIGURATION VALIDATION AND NOTES
-# ============================================================================
-"""
-Configuration Notes:
-1. All wavelength ranges should be within the available spectral range of your instrument
-2. File paths are constructed using os.path.join() for cross-platform compatibility
-3. Detection parameters may need adjustment based on your specific sample and imaging conditions
-4. Quality filtering parameters (MAX_WIDTH_NM, RSQ_MIN) can be relaxed for exploratory analysis
-5. Manual coordinates are provided as examples - replace with actual particle positions for your sample
-
-Typical Parameter Adjustment Workflow:
-1. Start with default parameters for initial analysis
-2. Examine debug images to assess detection performance
-3. Adjust DFS_INTENSITY_THRESHOLD if particles are missed or false positives occur
-4. Modify MAX_WIDTH_NM and RSQ_MIN based on the quality of your spectra
-5. Fine-tune background parameters if background subtraction is insufficient
-
-For MATLAB Compatibility:
-- BACKGROUND_PERCENTILE matches MATLAB's 10% darkest pixel approach
-- Lorentzian fitting uses identical mathematical form as MATLAB anfunc_lorentz_fit.m
-- Detection algorithms can replicate MATLAB partident.m behavior when PARTICLE_DETECTION_STYLE = 'matlab'
-"""

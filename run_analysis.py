@@ -12,17 +12,16 @@ from logger import setup_logger, close_logger
 
 def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
     """
-    Main execution function for DFS hyperspectral analysis pipeline
+    Main execution function for hyperspectral analysis pipeline
     
     This function orchestrates the complete analysis workflow including:
-    1. Setting up logging system for output capture
-    2. Creating and running dataset preprocessing
-    3. Performing spectral analysis and fitting
-    4. Generating all output files and visualizations
-    5. Proper cleanup of logging system
+    - DFS (Dark Field Scattering) analysis for spatial mapping
+    - EChem (Electrochemical) analysis for time-series spectroscopy
     
-    The function is designed to be robust with proper error handling
-    and cleanup even if analysis fails partway through.
+    The analysis mode is determined by args['ANALYSIS_MODE']:
+    - 'dfs': Traditional DFS particle detection and analysis
+    - 'echem': Electrochemical CV/CA/CC spectroscopy
+    - 'both': Sequential execution of both pipelines
     
     Parameters:
     -----------
@@ -31,46 +30,115 @@ def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
         Contains: config - path to configuration file
     args : Dict[str, Any]
         Configuration parameters loaded from config file
-        Contains all analysis parameters including:
-        - SAMPLE_NAME: Name of sample to analyze
-        - DATA_DIR: Directory containing TDMS files
-        - OUTPUT_DIR: Directory for saving results
-        - All detection and analysis parameters
+        Contains all analysis parameters
     """
     
     # Set up dual logging (console + file) for complete output capture
     logger = setup_logger(args['OUTPUT_DIR'])
     
     try:
-        # Print initial configuration information
-        print(f"[info] Starting analysis for {args['SAMPLE_NAME']}")
+        # Determine analysis mode
+        analysis_mode = args.get('ANALYSIS_MODE', 'dfs')
+        
+        print(f"[info] Analysis Mode: {analysis_mode.upper()}")
         print(f"[info] Output directory: {args['OUTPUT_DIR']}")
-        print(f"[info] Data directory: {args['DATA_DIR']}")
         print("")
         
-        # Step 1: Create dataset object and run preprocessing pipeline
-        # This includes: TDMS loading, wavelength cropping, flatfield correction,
-        # max intensity map creation, particle detection, and background correction
-        dataset = Dataset(args)
-        dataset.run_dataset()
-
-        # Step 2: Create spectrum analyzer and run spectral analysis pipeline
-        # This includes: Lorentzian fitting, quality filtering, representative selection,
-        # plot generation, data export, and summary statistics
-        spectrum_analysis = SpectrumAnalyzer(args, dataset)
-        spectrum_analysis.run_spectrum()
+        # Execute analysis based on mode
+        if analysis_mode == 'dfs':
+            run_dfs_analysis(args)
+        elif analysis_mode == 'echem':
+            run_echem_analysis(args)
+        elif analysis_mode == 'both':
+            print("[info] Running DFS analysis first...")
+            run_dfs_analysis(args)
+            print("\n[info] Running EChem analysis...")
+            run_echem_analysis(args)
+        else:
+            raise ValueError(f"Unknown ANALYSIS_MODE: {analysis_mode}. Use 'dfs', 'echem', or 'both'")
 
         print(f"\n[info] Completed  ▶  outputs saved in {args['OUTPUT_DIR']}")
         
     finally:
         # Always restore original stdout and close log file
-        # This ensures proper cleanup even if analysis fails
         close_logger()
+
+
+def run_dfs_analysis(args: Dict[str, Any]) -> None:
+    """
+    Execute DFS (Dark Field Scattering) analysis pipeline
+    
+    This includes:
+    - Loading hyperspectral image cube (H × W × λ)
+    - Particle detection and clustering
+    - Lorentzian fitting for each particle
+    - Statistical analysis and visualization
+    
+    Parameters:
+    -----------
+    args : Dict[str, Any]
+        Configuration parameters for DFS analysis
+    """
+    print("\n" + "="*60)
+    print("DFS ANALYSIS PIPELINE")
+    print("="*60)
+    print(f"[info] Sample: {args['SAMPLE_NAME']}")
+    print(f"[info] Data directory: {args['DATA_DIR']}")
+    
+    # Step 1: Create dataset object and run preprocessing pipeline
+    dataset = Dataset(args)
+    dataset.run_dataset()
+
+    # Step 2: Create spectrum analyzer and run spectral analysis pipeline
+    spectrum_analysis = SpectrumAnalyzer(args, dataset)
+    spectrum_analysis.run_spectrum()
+    
+    print("\n[info] DFS analysis complete")
+
+
+def run_echem_analysis(args: Dict[str, Any]) -> None:
+    """
+    Execute EChem (Electrochemical) analysis pipeline
+    
+    This includes:
+    - Loading time-series spectral data (Time × λ)
+    - Loading potentiostat data (voltage, current, charge)
+    - Lorentzian fitting for each time point
+    - CV/CA/CC cycle analysis
+    - Correlation with electrochemical parameters
+    
+    Results are saved to: OUTPUT_DIR/echem/
+    
+    Parameters:
+    -----------
+    args : Dict[str, Any]
+        Configuration parameters for EChem analysis
+    """
+    print("\n" + "="*60)
+    print("ECHEM ANALYSIS PIPELINE")
+    print("="*60)
+    print(f"[info] Sample: {args['ECHEM_SAMPLE_NAME']}")
+    print(f"[info] Data directory: {args['DATA_DIR']}")
+    print(f"[info] EChem output: {args['OUTPUT_DIR']}/echem/")
+    
+    # Import echem modules (lazy import to avoid dependency if not needed)
+    from echem.echem_dataset import EChemDataset
+    from echem.echem_analysis import EChemAnalyzer
+    
+    # Step 1: Load TDMS spectral data and potentiostat data
+    dataset = EChemDataset(args)
+    dataset.run_dataset()
+    
+    # Step 2: Perform electrochemical spectroscopy analysis
+    analyzer = EChemAnalyzer(args, dataset)
+    analyzer.run_analysis()
+    
+    print("\n[info] EChem analysis complete")
 
 
 if __name__ == "__main__":
     """
-    Command line interface for the DFS analysis pipeline
+    Command line interface for the hyperspectral analysis pipeline
     
     This script expects a single command line argument:
     --config: Path to a Python configuration file containing analysis parameters
@@ -79,16 +147,24 @@ if __name__ == "__main__":
     parameters for the analysis pipeline.
     
     Example usage:
-    python run_analysis.py --config path/to/config.py
+    python run_analysis.py --config config/config_dfs.py
+    python run_analysis.py --config config/echem/config_echem.py
     """
 
     # Set up command line argument parsing
     parser = argparse.ArgumentParser(
-        description="DFS Hyperspectral Analysis Pipeline",
+        description="Hyperspectral Analysis Pipeline (DFS + EChem)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example usage:
-  python run_analysis.py --config configs/sample_config.py
+  # DFS analysis only
+  python run_analysis.py --config config/config_dfs.py
+  
+  # EChem analysis only
+  python run_analysis.py --config config/echem/config_echem.py
+  
+  # Both analyses sequentially
+  python run_analysis.py --config config/config_both.py
 
 The configuration file must be a valid Python file that defines
 an 'args' dictionary containing all analysis parameters.
@@ -103,7 +179,6 @@ an 'args' dictionary containing all analysis parameters.
     opt = vars(parser.parse_args())
     
     # Load and execute configuration file
-    # The config file should define an 'args' dictionary in its global scope
     try:
         with codecs.open(opt['config'], 'r', encoding='UTF-8') as fs:
             # Execute the configuration file to load 'args' variable
@@ -118,4 +193,6 @@ an 'args' dictionary containing all analysis parameters.
         sys.exit(1)
     except Exception as e:
         print(f"Error loading configuration file: {str(e)}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)

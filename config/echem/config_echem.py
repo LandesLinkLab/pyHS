@@ -1,0 +1,155 @@
+import os
+import sys
+from pathlib import Path
+
+# Get user home directory for cross-platform compatibility
+home = str(Path.home())
+
+# Initialize configuration dictionary
+args = dict()
+
+# ============================================================================
+# BASIC FILE AND DIRECTORY SETTINGS
+# ============================================================================
+args['ECHEM_SAMPLE_NAME'] = 'AuNR_CV_001'  # Name of EChem spectral TDMS file (without .tdms extension)
+                                            # This file contains time-series spectra during electrochemical experiment
+args['ECHEM_CHI_FILE'] = 'AuNR_CV_001'     # CHI potentiostat data file name (without .txt extension)
+                                            # Contains voltage, current, and charge data synchronized with spectra
+
+args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw_jmkim')  # Directory containing TDMS and CHI files
+args['WHITE_FILE'] = "wc.tdms"     # White reference file name for flatfield correction
+args['DARK_FILE'] = "dc.tdms"      # Dark reference file name for flatfield correction
+args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_echem_output")  # Output directory for EChem results
+                                                                            # EChem saves to: OUTPUT_DIR/echem/
+
+# ============================================================================
+# PREPROCESSING PARAMETERS
+# ============================================================================
+args['CROP_RANGE_NM'] = (500, 850)  # Wavelength range (nm) to crop from the full hyperspectral cube
+                                     # This reduces data size and focuses analysis on the region of interest
+                                     # Applied after LOWERCUT/UPPERCUT pixel trimming
+
+# ============================================================================
+# ECHEM EXPERIMENTAL PARAMETERS
+# ============================================================================
+args['ECHEM_TECHNIQUE'] = 'CV'        # Electrochemical technique: 'CV', 'CA', or 'CC'
+                                      # CV: Cyclic Voltammetry (voltage cycles)
+                                      # CA: Chronoamperometry (potential steps)
+                                      # CC: Chronocoulometry (potential steps with charge integration)
+
+args['ECHEM_SCATT_TYPE'] = 'single'   # Particle type: 'single' (1 Lorentzian peak) or 'dimer' (2 peaks)
+                                      # Single: monomer nanoparticles with one plasmon mode
+                                      # Dimer: coupled particles with longitudinal/transverse modes
+
+# ============================================================================
+# ELECTROCHEMICAL REFERENCE PARAMETERS
+# ============================================================================
+args['ECHEM_OCP'] = 0.00              # Open circuit potential (V) used as baseline reference
+                                      # Spectral changes (Δ parameters) are calculated relative to OCP
+                                      # Measure this experimentally: equilibrium voltage before applying CV
+                                      # 
+                                      # How to measure:
+                                      # 1. Prepare sample in electrochemical cell
+                                      # 2. Wait for equilibration (no voltage applied)
+                                      # 3. Measure stable potential → this is your OCP
+                                      # 4. Set this value here before running analysis
+
+# ============================================================================
+# CYCLE/STEP ANALYSIS PARAMETERS
+# ============================================================================
+args['ECHEM_CYCLE_START'] = 1         # First cycle to include in averaging (1-indexed)
+                                      # Use this to skip initial unstable cycles
+                                      # Example: Set to 2 if first cycle shows unusual behavior
+
+args['ECHEM_CYCLE_BACKCUT'] = 0       # Number of cycles to exclude from the end
+                                      # Use this to exclude degraded final cycles
+                                      # Example: Set to 1 if last cycle shows particle damage
+
+# ============================================================================
+# SPECTRAL PROCESSING PARAMETERS
+# ============================================================================
+args['ECHEM_LOWERCUT'] = 140          # Pixels to trim from blue (short wavelength) end of spectrum
+                                      # Removes unreliable edge pixels affected by detector artifacts
+                                      # Processing order: LOWERCUT/UPPERCUT (pixels) → CROP_RANGE_NM (wavelength)
+
+args['ECHEM_UPPERCUT'] = 260          # Pixels to trim from red (long wavelength) end of spectrum
+                                      # These values match MATLAB cv_analysis script parameters
+                                      # Typical values: 140/260 but may need adjustment per instrument
+
+# ============================================================================
+# QUALITY FILTERING PARAMETERS
+# ============================================================================
+args['ECHEM_MAX_WIDTH_EV'] = 0.15     # Maximum allowed FWHM in eV for Lorentzian fits
+                                      # More lenient than DFS (~0.059 eV) due to electrochemical broadening
+                                      # Broader peaks during charging/discharging are normal
+                                      # Peaks broader than this are rejected as severely degraded
+
+args['ECHEM_RSQ_MIN'] = 0.85          # Minimum R-squared value for accepting fits
+                                      # More lenient than DFS (0.90) to accommodate noisier time-series data
+                                      # Lower threshold accounts for rapid spectral changes during cycling
+
+# ============================================================================
+# OUTPUT AND VISUALIZATION SETTINGS
+# ============================================================================
+args['FIG_DPI'] = 300  # Resolution (dots per inch) for saved figures
+                       # 300 DPI is publication quality, 150 DPI is suitable for presentations
+
+# Display parameters for detailed cycle plots (reserved for future implementation)
+args['ECHEM_CYCLE_PLOT_START'] = 1    # First cycle to display in detail plots
+args['ECHEM_CYCLE_PLOT_END'] = 4      # Last cycle to display in detail plots
+
+# ============================================================================
+# DEBUG AND DEVELOPMENT SETTINGS
+# ============================================================================
+args['DEBUG'] = True  # Enable debug mode for additional output and intermediate file saving
+                       # When True, creates debug images and verbose console output
+                       # Set to False for production runs to reduce output volume
+
+# ============================================================================
+# CONFIGURATION NOTES
+# ============================================================================
+"""
+EChem Configuration Guide:
+
+Quick Start:
+1. Set ECHEM_SAMPLE_NAME and ECHEM_CHI_FILE (same name usually)
+2. Measure and set ECHEM_OCP before experiment
+3. Run: python run_analysis.py --echem-config config/echem/config_echem.py
+
+Data Processing Order:
+1. Load TDMS file (full wavelength range)
+2. Apply ECHEM_LOWERCUT/UPPERCUT (remove edge pixels)
+3. Apply CROP_RANGE_NM (crop to wavelength range)
+4. Flatfield correction with white/dark references
+5. Lorentzian fitting for each time point
+6. Cycle detection and averaging
+7. Generate plots and save results
+
+Typical Parameter Adjustment:
+- ECHEM_LOWERCUT/UPPERCUT: Check debug plots, adjust if edge artifacts visible
+- ECHEM_OCP: Must measure experimentally for each sample
+- ECHEM_CYCLE_START: Set to 2 if first cycle is unstable
+- ECHEM_MAX_WIDTH_EV/RSQ_MIN: Relax if too many fits rejected, tighten if quality poor
+
+File Structure:
+DATA_DIR/
+├── AuNR_CV_001.tdms      # Spectral time-series data
+├── AuNR_CV_001.txt       # CHI potentiostat data
+├── wc.tdms               # White reference
+└── dc.tdms               # Dark reference
+
+Output Structure:
+OUTPUT_DIR/
+├── echem/
+│   ├── debug/
+│   │   ├── *_spectral_heatmap.png
+│   │   ├── *_voltage_trace.png
+│   │   └── *_sample_spectra.png
+│   ├── spectra/
+│   │   ├── *_spectrum_0001.txt
+│   │   ├── *_spectrum_0002.txt
+│   │   └── *_cycle_01.txt
+│   ├── *_overview.png
+│   ├── *_cycle_averaged.png
+│   └── *_echem_results.pkl
+└── log.txt
