@@ -9,6 +9,11 @@ home = str(Path.home())
 args = dict()
 
 # ============================================================================
+# ANALYSIS MODE
+# ============================================================================
+args['ANALYSIS_MODE'] = 'echem'
+
+# ============================================================================
 # BASIC FILE AND DIRECTORY SETTINGS
 # ============================================================================
 args['ECHEM_SAMPLE_NAME'] = 'AuNR_CV_001'  # Name of EChem spectral TDMS file (without .tdms extension)

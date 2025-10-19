@@ -7,6 +7,7 @@ from typing import List, Dict, Tuple, Set, Union, Optional, Any, Callable, TextI
 
 from data.dataset import Dataset
 from spectrum.spectrum import SpectrumAnalyzer
+from echem.echem import EChemAnalyzer
 from logger import setup_logger, close_logger
 
 
@@ -21,7 +22,6 @@ def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
     The analysis mode is determined by args['ANALYSIS_MODE']:
     - 'dfs': Traditional DFS particle detection and analysis
     - 'echem': Electrochemical CV/CA/CC spectroscopy
-    - 'both': Sequential execution of both pipelines
     
     Parameters:
     -----------
@@ -44,96 +44,30 @@ def main(opt: Dict[str, Any], args: Dict[str, Any]) -> None:
         print(f"[info] Output directory: {args['OUTPUT_DIR']}")
         print("")
         
-        # Execute analysis based on mode
+        # Step 1: Load and preprocess data using unified Dataset
+        print(f"[info] Loading dataset...")
+        dataset = Dataset(args)  # mode is auto-detected from args['ANALYSIS_MODE']
+        dataset.run_dataset()
+        
+        # Step 2: Run analysis based on mode
         if analysis_mode == 'dfs':
-            run_dfs_analysis(args)
+            print(f"\n[info] Running DFS analysis...")
+            analyzer = SpectrumAnalyzer(args, dataset)
+            analyzer.run_spectrum()
+        
         elif analysis_mode == 'echem':
-            run_echem_analysis(args)
-        elif analysis_mode == 'both':
-            print("[info] Running DFS analysis first...")
-            run_dfs_analysis(args)
-            print("\n[info] Running EChem analysis...")
-            run_echem_analysis(args)
+            print(f"\n[info] Running EChem analysis...")
+            analyzer = EChemAnalyzer(args, dataset)
+            analyzer.run_analysis()
+        
         else:
-            raise ValueError(f"Unknown ANALYSIS_MODE: {analysis_mode}. Use 'dfs', 'echem', or 'both'")
+            raise ValueError(f"Unknown ANALYSIS_MODE: {analysis_mode}. Use 'dfs' or 'echem'")
 
-        print(f"\n[info] Completed  ▶  outputs saved in {args['OUTPUT_DIR']}")
+        print(f"\n[info] Completed ▶ outputs saved in {args['OUTPUT_DIR']}")
         
     finally:
         # Always restore original stdout and close log file
         close_logger()
-
-
-def run_dfs_analysis(args: Dict[str, Any]) -> None:
-    """
-    Execute DFS (Dark Field Scattering) analysis pipeline
-    
-    This includes:
-    - Loading hyperspectral image cube (H × W × λ)
-    - Particle detection and clustering
-    - Lorentzian fitting for each particle
-    - Statistical analysis and visualization
-    
-    Parameters:
-    -----------
-    args : Dict[str, Any]
-        Configuration parameters for DFS analysis
-    """
-    print("\n" + "="*60)
-    print("DFS ANALYSIS PIPELINE")
-    print("="*60)
-    print(f"[info] Sample: {args['SAMPLE_NAME']}")
-    print(f"[info] Data directory: {args['DATA_DIR']}")
-    
-    # Step 1: Create dataset object and run preprocessing pipeline
-    dataset = Dataset(args)
-    dataset.run_dataset()
-
-    # Step 2: Create spectrum analyzer and run spectral analysis pipeline
-    spectrum_analysis = SpectrumAnalyzer(args, dataset)
-    spectrum_analysis.run_spectrum()
-    
-    print("\n[info] DFS analysis complete")
-
-
-def run_echem_analysis(args: Dict[str, Any]) -> None:
-    """
-    Execute EChem (Electrochemical) analysis pipeline
-    
-    This includes:
-    - Loading time-series spectral data (Time × λ)
-    - Loading potentiostat data (voltage, current, charge)
-    - Lorentzian fitting for each time point
-    - CV/CA/CC cycle analysis
-    - Correlation with electrochemical parameters
-    
-    Results are saved to: OUTPUT_DIR/echem/
-    
-    Parameters:
-    -----------
-    args : Dict[str, Any]
-        Configuration parameters for EChem analysis
-    """
-    print("\n" + "="*60)
-    print("ECHEM ANALYSIS PIPELINE")
-    print("="*60)
-    print(f"[info] Sample: {args['ECHEM_SAMPLE_NAME']}")
-    print(f"[info] Data directory: {args['DATA_DIR']}")
-    print(f"[info] EChem output: {args['OUTPUT_DIR']}/echem/")
-    
-    # Import echem modules (lazy import to avoid dependency if not needed)
-    from echem.echem_dataset import EChemDataset
-    from echem.echem_analysis import EChemAnalyzer
-    
-    # Step 1: Load TDMS spectral data and potentiostat data
-    dataset = EChemDataset(args)
-    dataset.run_dataset()
-    
-    # Step 2: Perform electrochemical spectroscopy analysis
-    analyzer = EChemAnalyzer(args, dataset)
-    analyzer.run_analysis()
-    
-    print("\n[info] EChem analysis complete")
 
 
 if __name__ == "__main__":
@@ -147,7 +81,7 @@ if __name__ == "__main__":
     parameters for the analysis pipeline.
     
     Example usage:
-    python run_analysis.py --config config/config_dfs.py
+    python run_analysis.py --config config/dfs/config_dfs.py
     python run_analysis.py --config config/echem/config_echem.py
     """
 
@@ -157,14 +91,11 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example usage:
-  # DFS analysis only
-  python run_analysis.py --config config/config_dfs.py
+  # DFS analysis
+  python run_analysis.py --config config/dfs/config_dfs.py
   
-  # EChem analysis only
+  # EChem analysis
   python run_analysis.py --config config/echem/config_echem.py
-  
-  # Both analyses sequentially
-  python run_analysis.py --config config/config_both.py
 
 The configuration file must be a valid Python file that defines
 an 'args' dictionary containing all analysis parameters.

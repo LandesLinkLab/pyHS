@@ -7,7 +7,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional, Any, Union
 
-from . import spectrum_util as su
+import spectrum_util as su
 
 class SpectrumAnalyzer:
     """
