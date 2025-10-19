@@ -274,10 +274,10 @@ class EChemAnalyzer:
         if self.technique == 'CV':
             self.identify_cv_cycles()
         elif self.technique in ['CA', 'CC']:
-            self.identify_ca_cc_steps()
+            raise NotImplementedError("This function is not implemented yet.")
+            # self.identify_ca_cc_steps()
         else:
-            print(f"[warning] Unknown technique {self.technique}, treating as CV")
-            self.identify_cv_cycles()
+            raise ValueError("Invalid value passed to function.")
     
     def identify_cv_cycles(self):
         """
