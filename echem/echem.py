@@ -95,6 +95,10 @@ class EChemAnalyzer:
         
         # Convert wavelengths to energy (eV) for fitting
         energy = 1239.842 / wavelengths
+
+        if energy[0] > energy[-1]:
+            energy = energy[::-1]
+            print("[debug] Reversed energy array to ensure monotonic increase")
         
         # Quality filter parameters
         max_width = self.args.get("ECHEM_MAX_WIDTH_EV", 0.15)  # Max FWHM in eV
@@ -198,14 +202,14 @@ class EChemAnalyzer:
         print(f"  Rejected (poor fit): {stats['rejected_fitting']}")
         print(f"  Accepted: {stats['accepted']}")
     
-    def fit_lorentz_energy(self, energy: np.ndarray, spectrum: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
+        def fit_lorentz_energy(self, energy: np.ndarray, spectrum: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
         """
-        Fit Lorentzian in energy space (wrapper for spectrum_util.fit_lorentz)
+        Fit Lorentzian in energy space
         
         Parameters:
         -----------
         energy : np.ndarray
-            Energy array (eV)
+            Energy array (eV) - MUST be monotonically increasing
         spectrum : np.ndarray
             Intensity array
         
@@ -213,28 +217,81 @@ class EChemAnalyzer:
         --------
         Tuple[np.ndarray, Dict[str, float], float]
             - Fitted curve
-            - Parameters dict
+            - Parameters dict with keys: 'a', 'b1' (peak in eV), 'c1' (FWHM in eV)
             - R-squared value
         """
-        # Create temporary args for fitting range in energy
-        fit_args = {
-            'FIT_RANGE_NM': (self.dataset.wavelengths.min(), self.dataset.wavelengths.max())
-        }
         
-        # Convert to wavelength for su.fit_lorentz
-        wavelengths = 1239.842 / energy
+        def lorentz_energy(E, a, E0, gamma):
+            """
+            Lorentzian in energy space
+            E0: peak energy (eV)
+            gamma: FWHM (eV)
+            """
+            return (2*a/np.pi) * (gamma / (4*(E-E0)**2 + gamma**2))
         
-        # Reverse arrays to maintain monotonic wavelength
-        wl_sorted = wavelengths[::-1]
-        spec_sorted = spectrum[::-1]
+        # Validate input
+        if len(spectrum) == 0 or np.all(spectrum == 0) or np.isnan(spectrum).any():
+            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
         
-        # Fit using existing function
-        y_fit_sorted, params, r2 = su.fit_lorentz(fit_args, spec_sorted, wl_sorted)
+        # Initial parameter guesses
+        idx_max = np.argmax(spectrum)
         
-        # Convert fit back to energy order
-        y_fit = y_fit_sorted[::-1]
+        if spectrum[idx_max] <= 0:
+            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
         
-        return y_fit, params, r2
+        # Initial guesses
+        a0 = spectrum[idx_max] * np.pi / 2
+        E0 = energy[idx_max]  # Peak energy
+        
+        # Estimate FWHM
+        half_max = spectrum[idx_max] / 2
+        above_half = spectrum > half_max
+        if np.sum(above_half) > 1:
+            indices = np.where(above_half)[0]
+            gamma0 = energy[indices[-1]] - energy[indices[0]]
+        else:
+            gamma0 = 0.1  # Default FWHM: 0.1 eV
+        
+        p0 = [a0, E0, gamma0]
+        
+        try:
+            # Set bounds (energy space)
+            bounds = (
+                [0, energy.min(), 0.001],           # Lower bounds
+                [np.inf, energy.max(), 1.0]         # Upper bounds (max FWHM = 1 eV)
+            )
+            
+            # Perform fitting
+            popt, pcov = curve_fit(
+                lorentz_energy, 
+                energy, 
+                spectrum, 
+                p0=p0,
+                bounds=bounds,
+                maxfev=8000,
+                method='trf'
+            )
+            
+            # Generate fitted curve
+            y_fit = lorentz_energy(energy, *popt)
+            
+            # Calculate R-squared
+            ss_res = np.sum((spectrum - y_fit)**2)
+            ss_tot = np.sum((spectrum - spectrum.mean())**2)
+            r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+            
+            # Package parameters
+            params = {
+                'a': popt[0],    # Amplitude
+                'b1': popt[1],   # Peak energy (eV)
+                'c1': popt[2]    # FWHM (eV)
+            }
+            
+            return y_fit, params, float(r2)
+        
+        except Exception as e:
+            print(f"[warning] Fitting failed: {str(e)}")
+            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
     
     def convert_fwhm_ev_to_nm(self, peak_ev: float, fwhm_ev: float) -> float:
         """
