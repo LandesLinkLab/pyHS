@@ -429,7 +429,7 @@ class Dataset(object):
         self.cube = self.spectra
         
         print(f"[debug] After flatfield: range [{self.spectra.min():.3f}, {self.spectra.max():.3f}]")
-    
+ 
     def crop_wavelength_echem(self):
         """Crop wavelength range (EChem mode)"""
         print(f"\n[debug] Cropping wavelength range...")
@@ -460,7 +460,7 @@ class Dataset(object):
         print(f"[debug] After cropping:")
         print(f"  Wavelength range: {self.wavelengths.min():.1f} - {self.wavelengths.max():.1f} nm")
         print(f"  Spectra shape: {self.spectra.shape}")
-    
+
     def save_debug_plots_echem(self):
         """Save EChem debug visualizations"""
         output_dir = self.echem_output_dir / "debug"
