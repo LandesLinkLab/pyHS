@@ -151,13 +151,37 @@ def plot_spectrum(x: np.ndarray,
         Additional configuration parameters
     """
     fig, ax = plt.subplots(figsize=(8, 6))
+
+    output_unit = args.get('OUTPUT_UNIT')
+
+    if output_unit == 'eV':
+
+        x = 1239.842 / x
+        x = x[::-1]
+        y = y[::-1]
+        y_fit = y_fit
+
+    elif output_unit == 'nm':
+
+        pass
+
+    else:
+
+        raise ValueError("Invalid x-axis unit")
     
     # Plot data and fit with MATLAB-style formatting
     ax.plot(x, y, 'b-', linewidth=3, label='Data')           # Blue solid line for data
     ax.plot(x, y_fit, 'k--', linewidth=3, label='Lorentz fit') # Black dashed line for fit
     
     # Axis labels with large font sizes (MATLAB-compatible)
-    ax.set_xlabel('Wavelength (nm)', fontsize=32)
+    if output_unit == 'eV':
+
+        ax.set_xlabel('Energy (eV)', fontsize=32)
+
+    else:
+
+        ax.set_xlabel('Wavelength (nm)', fontsize=32)
+
     ax.set_ylabel('Scattering', fontsize=32)
     
     # Large tick labels for readability
@@ -169,19 +193,36 @@ def plot_spectrum(x: np.ndarray,
     
     # Add parameter text annotations if available
     if params is not None and snr is not None:
-        lambda_max = params.get('b1', 0)  # Center wavelength
-        gamma = params.get('c1', 0)       # FWHM
+
+        lambda_max_nm = params.get('b1', 0)  # Center wavelength
+        lambda_max_ev = 1239.842 / lambda_max_nm
+        gamma_nm = params.get('c1', 0)       # FWHM
+        gamma_eV = 1239.842 / (lambda_max_nm - gamma_nm/2) - 1239.842/(lambda_max_nm + gamma_nm/2)
         
         # Position annotations in upper right area
-        ax.text(0.55, 0.9, f'λ_max = {lambda_max:.0f} nm',
-                transform=ax.transAxes, fontsize=20)
-        ax.text(0.55, 0.78, f'Γ = {gamma:.0f} nm',
-                transform=ax.transAxes, fontsize=20)
-        ax.text(0.55, 0.66, f'S/N = {snr:.0f}',
-                transform=ax.transAxes, fontsize=20)
+        if output_unit == 'nm':
+
+            ax.text(0.55, 0.9, f'λ_max = {lambda_max_nm:.0f} nm', transform=ax.transAxes, fontsize=20)
+            ax.text(0.55, 0.78, f'Γ = {gamma_nm:.0f} nm', transform=ax.transAxes, fontsize=20)
+            ax.text(0.55, 0.66, f'S/N = {snr:.0f}', transform=ax.transAxes, fontsize=20)
+
+        elif output_unit == 'eV':
+
+            ax.text(0.55, 0.9, f'E_max = {lambda_max_ev:.3f} nm', transform=ax.transAxes, fontsize=20)
+            ax.text(0.55, 0.78, f'Γ = {gamma_ev:.0f} nm', transform=ax.transAxes, fontsize=20)
+            ax.text(0.55, 0.66, f'S/N = {snr:.0f}', transform=ax.transAxes, fontsize=20)
+
     
     # Set fixed axis ranges for consistency across plots
-    ax.set_xlim(500, 825)  # Standard wavelength range for DFS
+    xmin, xmax = args['CROP_RANGE_NM']
+    if output_unit == 'nm':
+
+        ax.set_xlim(xmin, xmax)
+
+    elif output_unit == 'eV':
+
+        ax.set_xlim(1239.842 / xmax, 1239.842 / xmin)
+
     
     # Set Y-axis range with error protection
     y_max = max(y.max(), y_fit.max()) if len(y) > 0 else 1.0
@@ -203,7 +244,8 @@ def plot_spectrum(x: np.ndarray,
 def save_dfs_particle_map(max_map: np.ndarray, 
                         representatives: List[Dict[str, Any]], 
                         output_path: Path, 
-                        sample_name: str) -> None:
+                        sample_name: str,
+                        args: Optional[Dict[str, Any]] = None) -> None:
     """
     Save annotated particle map showing all analyzed particles with markers
     
@@ -244,6 +286,8 @@ def save_dfs_particle_map(max_map: np.ndarray,
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label('Max Intensity', fontsize=12)
     
+    output_unit - args.get('OUTPUT_UNIT')
+
     # Add particle markers and annotations
     for i, rep in enumerate(representatives):
         row, col = rep['row'], rep['col']
@@ -265,13 +309,24 @@ def save_dfs_particle_map(max_map: np.ndarray,
                 fontweight='bold',
                 bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
         
+        if output_unit == 'eV'
+            energy = 1239.842 / rep['peak_wl']
+            
+            ax.text(col - 3, row - 3,
+                    f'{energy:.3f}nm',
+                    color='yellow',
+                    fontsize=6,
+                    fontweight='bold',
+                    ha='left')
+
+        else:
         # Wavelength annotation in contrasting color
-        ax.text(col - 3, row - 3,
-                f'{rep["peak_wl"]:.0f}nm',
-                color='yellow',
-                fontsize=6,
-                fontweight='bold',
-                ha='left')
+            ax.text(col - 3, row - 3,
+                    f'{rep["peak_wl"]:.0f}nm',
+                    color='yellow',
+                    fontsize=6,
+                    fontweight='bold',
+                    ha='left')
     
     # Title and axis labels
     ax.set_title(f'{sample_name} - DFS Particle Map ({len(representatives)} particles)', 

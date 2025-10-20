@@ -333,7 +333,8 @@ class SpectrumAnalyzer:
             display_map,              # Background intensity map
             self.representatives,     # Representative particles to mark
             output_path,             # Output file path
-            self.dataset.sample_name # Sample name for title
+            self.dataset.sample_name, # Sample name for title
+            self.args
         )
     
     def save_spectra(self):
@@ -356,13 +357,33 @@ class SpectrumAnalyzer:
             # Generate sequential particle numbers
             particle_num = i + 1
             
-            # Prepare data array: wavelength, intensity, fit
-            data = np.column_stack((self.dataset.wvl, rep['spectrum'], rep['fit']))
+            if output_unit == 'eV':
+
+                energy = 1239.842 / self.dataset.wvl
+                energy = energy[::-1]
+                spectrum = rep['spectrum'][::-1]
+                fit = ref['fit'][::-1]
+
+                data = np.column_stack(energy, spectrum, fit)
+
+                peak_ev = 1239.842 / rep['peak_wl']
+                peak_nm = rep['peak_wl']
+                fwhm_nm = rep['fwhm']
+                fwhm_ev = 1239.842/(peak_nm - fwhm_nm/2) - 1239.842/(peak_nm + fwhm_nm/2)
             
-            # Create informative header with metadata
-            header = f"Wavelength(nm)\tIntensity\tFit\n"
-            header += f"# Particle {particle_num}, Cluster {rep['cluster_label']}, Position ({rep['row']},{rep['col']})\n"
-            header += f"# Peak: {rep['peak_wl']:.1f} nm, FWHM: {rep['fwhm']:.1f} nm, S/N: {rep['snr']:.1f}"
+                header = f"Energy(eV)\tIntensity\tFit\n"
+                header += f"# Particle {particle_num}, Cluster {rep['cluster_label']}, Position ({rep['row']},{rep['col']})\n"
+                header += f"# Peak: {peak_ev:.3f} eV ({rep['peak_wl']:.1f} nm), FWHM: {fwhm_ev:.3f} eV, S/N: {rep['snr']:.1f}"
+            
+            else:
+
+                # Prepare data array: wavelength, intensity, fit
+                data = np.column_stack((self.dataset.wvl, rep['spectrum'], rep['fit']))
+                
+                # Create informative header with metadata
+                header = f"Wavelength(nm)\tIntensity\tFit\n"
+                header += f"# Particle {particle_num}, Cluster {rep['cluster_label']}, Position ({rep['row']},{rep['col']})\n"
+                header += f"# Peak: {rep['peak_wl']:.1f} nm, FWHM: {rep['fwhm']:.1f} nm, S/N: {rep['snr']:.1f}"
             
             # Save to text file with tab separation
             np.savetxt(
@@ -396,21 +417,45 @@ class SpectrumAnalyzer:
         print(f"Rejected spectra: {len(self.rejected_spectra)}")
         
         if self.representatives:
-            # Extract parameters for statistical analysis
-            wavelengths = [r['peak_wl'] for r in self.representatives]
-            fwhms = [r['fwhm'] for r in self.representatives if r['fwhm'] > 0]
-            snrs = [r['snr'] for r in self.representatives]
-            cluster_sizes = [r['cluster_size'] for r in self.representatives]
-            r2s = [r['r2'] for r in self.representatives]
-            
-            # Resonance wavelength statistics
-            print(f"\nResonance wavelength: {np.mean(wavelengths):.1f} ± {np.std(wavelengths):.1f} nm")
-            print(f"  Range: {min(wavelengths):.1f} - {max(wavelengths):.1f} nm")
-            
-            # FWHM statistics
-            if fwhms:
-                print(f"\nFWHM: {np.mean(fwhms):.1f} ± {np.std(fwhms):.1f} nm")
-                print(f"  Range: {min(fwhms):.1f} - {max(fwhms):.1f} nm")
+
+            output_unit = self.args.get('OUTPUT_UNIT')
+
+            if output_unit == 'eV':
+
+                peak_energies = [1239.842/r['peak_wl'] for r in self.representatives]
+
+                fwhm_evs = []
+                for r in self.representatives:
+                    peak_nm = r['peak_wl']
+                    fwhm_nm = r['fwhm']
+                    if fwhm_nm > 0:
+                        fwhm_ev = 1239.842/(peak_nm - fwhm_nm/2) - 1239.842/(peak_nm + fwhm_nm/2)
+                        fwhm_evs.append(abs(fwhm_ev))
+                
+                print(f"\nResonance energy: {np.mean(peak_energies):.3f} ± {np.std(peak_energies):.3f} eV")
+                print(f"  Range: {min(peak_energies):.3f} - {max(peak_energies):.3f} eV")
+                
+                if fwhm_evs:
+                    print(f"\nFWHM: {np.mean(fwhm_evs):.3f} ± {np.std(fwhm_evs):.3f} eV")
+                    print(f"  Range: {min(fwhm_evs):.3f} - {max(fwhm_evs):.3f} eV")
+
+            else:
+
+                # Extract parameters for statistical analysis
+                wavelengths = [r['peak_wl'] for r in self.representatives]
+                fwhms = [r['fwhm'] for r in self.representatives if r['fwhm'] > 0]
+                snrs = [r['snr'] for r in self.representatives]
+                cluster_sizes = [r['cluster_size'] for r in self.representatives]
+                r2s = [r['r2'] for r in self.representatives]
+                
+                # Resonance wavelength statistics
+                print(f"\nResonance wavelength: {np.mean(wavelengths):.1f} ± {np.std(wavelengths):.1f} nm")
+                print(f"  Range: {min(wavelengths):.1f} - {max(wavelengths):.1f} nm")
+                
+                # FWHM statistics
+                if fwhms:
+                    print(f"\nFWHM: {np.mean(fwhms):.1f} ± {np.std(fwhms):.1f} nm")
+                    print(f"  Range: {min(fwhms):.1f} - {max(fwhms):.1f} nm")
             
             # Signal-to-noise ratio statistics
             print(f"\nS/N ratio: {np.mean(snrs):.1f} ± {np.std(snrs):.1f}")
@@ -462,6 +507,7 @@ class SpectrumAnalyzer:
             'representatives': self.representatives,
             'rejected_spectra': self.rejected_spectra,
             'config': self.args,
+            'output_unit': self.args.get('OUTPUT_UNIT')
             'analysis_date': str(datetime.now().strftime("%m-%d-%Y %H:%M:%S"))
         }
         

@@ -91,6 +91,10 @@ args['FIT_RANGE_NM'] = (500, 850)  # Wavelength range (nm) for Lorentzian curve 
 args['FIG_DPI'] = 300  # Resolution (dots per inch) for saved figures
                        # 300 DPI is publication quality, 150 DPI is suitable for presentations
 
+args['OUTPUT_UNIT'] = 'eV'            # Unit for spectral output: 'nm' (wavelength) or 'eV' (energy)
+                                      # 'nm': Traditional wavelength units (λ in nanometers)
+                                      # 'eV': Energy units (E = hc/λ = 1239.842/λ_nm)
+
 # ============================================================================
 # MANUAL COORDINATE OVERRIDE (ADVANCED USERS)
 # ============================================================================

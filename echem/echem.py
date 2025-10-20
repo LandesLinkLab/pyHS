@@ -619,24 +619,35 @@ class EChemAnalyzer:
         
         output_dir = Path(self.args['OUTPUT_DIR']) / "spectra"
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        output_unit = self.args.get('OUTPUT_UNIT', 'eV')
         
         # Save individual spectra with fits
         for i, param in enumerate(self.fitted_params):
-            # Prepare data array
-            energy = 1239.842 / self.dataset.wavelengths
-            data = np.column_stack((
-                self.dataset.wavelengths,
-                energy,
-                param['spectrum'],
-                param['fit']
-            ))
             
-            # Create header
-            header = f"Wavelength(nm)\tEnergy(eV)\tIntensity\tFit\n"
-            header += f"# Spectrum {i+1}, Time={param['time']:.2f}s, Voltage={param['voltage']:.3f}V\n"
-            header += f"# Peak: {param['peakeV1']:.4f} eV ({param['peaknm1']:.1f} nm)\n"
-            header += f"# FWHM: {param['FWHMeV1']:.4f} eV ({param['FWHMnm1']:.1f} nm)\n"
-            header += f"# R²: {param['r2']:.4f}, SNR: {param['snr']:.1f}"
+            if output_unit == 'nm':
+
+                data = np.column_stack((self.dataset.wavelengths, param['spectrum'][::-1], param['fit'][::-1]))
+
+                header = f"Wavelength (nm)\tIntensity\tFit\n"
+                header += f"# Peak: {param['peaknm1']:.1f} nm, FWHM: {param['FWHMnm1']:.1f} nm\n"
+                header += f"# Spectrum {i+1}, Time={param['time']:.2f}s, Voltage={param['voltage']:.3f}V\n"
+                header += f"# R²: {param['r2']:.4f}, SNR: {param['snr']:.1f}"
+
+            else:
+                # Prepare data array
+                energy = 1239.842 / self.dataset.wavelengths
+                data = np.column_stack((
+                    self.dataset.wavelengths,
+                    energy,
+                    param['spectrum'],
+                    param['fit']
+                ))
+
+                header = f"Energy (eV)\tIntensity\tFit\n"
+                header += f"# Peak: {param['peakeV1']:.3f} eV, FWHM: {param['FWHMeV1']:.3f} eV\n"
+                header += f"# Spectrum {i+1}, Time={param['time']:.2f}s, Voltage={param['voltage']:.3f}V\n"
+                header += f"# R²: {param['r2']:.4f}, SNR: {param['snr']:.1f}"
             
             # Save file
             output_file = output_dir / f"{self.dataset.sample_name}_spectrum_{i+1:04d}.txt"

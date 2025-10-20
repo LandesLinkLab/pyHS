@@ -102,6 +102,10 @@ args['FIG_DPI'] = 300  # Resolution (dots per inch) for saved figures
 # Display parameters for detailed cycle plots (reserved for future implementation)
 args['ECHEM_CYCLE_PLOT_START'] = 1    # First cycle to display in detail plots
 args['ECHEM_CYCLE_PLOT_END'] = 4      # Last cycle to display in detail plots
+args['OUTPUT_UNIT'] = 'eV'            # Unit for spectral output: 'nm' (wavelength) or 'eV' (energy)
+                                      # 'nm': Traditional wavelength units (λ in nanometers)
+                                      # 'eV': Energy units (E = hc/λ = 1239.842/λ_nm)
+
 
 # ============================================================================
 # DEBUG AND DEVELOPMENT SETTINGS
