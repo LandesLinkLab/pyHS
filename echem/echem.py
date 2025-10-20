@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional, Any
+from scipy.optimize import curve_fit  # ← 추가!
 
 # Import from spectrum module (reuse Lorentzian fitting)
 from spectrum import spectrum_util as su
@@ -41,52 +42,141 @@ class EChemAnalyzer:
         self.dataset = dataset
         
         # Analysis parameters
-        self.technique = args.get('ECHEM_TECHNIQUE', 'CV')  # CV, CA, or CC
-        self.scatt_type = args.get('ECHEM_SCATT_TYPE', 'single')  # single or dimer
-        self.ocp = args.get('ECHEM_OCP', 0.0)  # Open circuit potential
-        self.cycle_start = args.get('ECHEM_CYCLE_START', 1)  # First cycle to analyze
-        self.cycle_backcut = args.get('ECHEM_CYCLE_BACKCUT', 0)  # Cycles to exclude at end
+        self.technique = args.get('ECHEM_TECHNIQUE', 'CV')
+        self.scatt_type = args.get('ECHEM_SCATT_TYPE', 'single')
+        self.ocp = args.get('ECHEM_OCP', 0.0)
+        self.cycle_start = args.get('ECHEM_CYCLE_START', 1)
+        self.cycle_backcut = args.get('ECHEM_CYCLE_BACKCUT', 0)
         
         # Results storage
         self.cycle_boundaries = []
-        self.fitted_params = []  # Fitted parameters for each time point
-        self.cycles = []  # Cycle-averaged data
-        self.rejected_fits = []  # Rejected fits for debugging
+        self.fitted_params = []
+        self.cycles = []
+        self.rejected_fits = []
         
     def run_analysis(self):
-        """
-        Execute the complete EChem spectroscopy analysis pipeline
-        
-        Steps:
-        1. Fit Lorentzian to all time-point spectra
-        2. Identify experimental cycles (CV) or steps (CA/CC)
-        3. Calculate cycle-averaged parameters and statistics
-        4. Generate overview and cycle plots
-        5. Save spectral data and results
-        6. Export to pickle file
-        """
+        """Execute the complete EChem spectroscopy analysis pipeline"""
         print("\n" + "="*60)
         print("ECHEM SPECTROSCOPY ANALYSIS")
         print("="*60)
         
-        self.fit_all_spectra()          # Step 1: Fit all spectra
-        self.identify_cycles()          # Step 2: Find cycles/steps
-        self.calculate_cycle_averages() # Step 3: Cycle averaging
-        self.plot_overview()            # Step 4: Overview plot
-        self.plot_cycles()              # Step 5: Individual cycle plots
-        self.save_spectra_data()        # Step 6: Export data
-        self.dump_results()             # Step 7: Save pickle
-        self.print_summary()            # Step 8: Summary statistics
+        self.fit_all_spectra()
+        self.identify_cycles()
+        self.calculate_cycle_averages()
+        self.plot_overview()
+        self.plot_cycles()
+        self.save_spectra_data()
+        self.dump_results()
+        self.print_summary()
+    
+    def fit_lorentz_energy(self, energy: np.ndarray, spectrum: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
+        """
+        Fit Lorentzian in energy space
+        
+        Parameters:
+        -----------
+        energy : np.ndarray
+            Energy array (eV) - MUST be monotonically increasing
+        spectrum : np.ndarray
+            Intensity array
+        
+        Returns:
+        --------
+        Tuple[np.ndarray, Dict[str, float], float]
+            - Fitted curve
+            - Parameters dict with keys: 'a', 'b1' (peak in eV), 'c1' (FWHM in eV)
+            - R-squared value
+        """
+        
+        def lorentz_energy(E, a, E0, gamma):
+            """
+            Lorentzian in energy space
+            E0: peak energy (eV)
+            gamma: FWHM (eV)
+            """
+            return (2*a/np.pi) * (gamma / (4*(E-E0)**2 + gamma**2))
+        
+        # Validate input
+        if len(spectrum) == 0 or np.all(spectrum <= 0) or np.isnan(spectrum).any():
+            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+        
+        # Check if spectrum has sufficient variation
+        if spectrum.max() - spectrum.min() < 0.01:
+            print(f"[warning] Spectrum has insufficient variation")
+            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+        
+        # Initial parameter guesses
+        idx_max = np.argmax(spectrum)
+        
+        if spectrum[idx_max] <= 0:
+            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+        
+        # Initial guesses
+        a0 = spectrum[idx_max] * np.pi / 2
+        E0 = energy[idx_max]  # Peak energy
+        
+        # Estimate FWHM
+        half_max = spectrum[idx_max] / 2
+        above_half = spectrum > half_max
+        if np.sum(above_half) > 1:
+            indices = np.where(above_half)[0]
+            gamma0 = abs(energy[indices[-1]] - energy[indices[0]])
+            gamma0 = max(gamma0, 0.01)  # Minimum FWHM
+        else:
+            gamma0 = 0.1  # Default FWHM: 0.1 eV
+        
+        p0 = [a0, E0, gamma0]
+        
+        try:
+            # Set bounds (energy space)
+            bounds = (
+                [0, energy.min(), 0.001],           # Lower bounds
+                [np.inf, energy.max(), 2.0]         # Upper bounds (max FWHM = 2 eV)
+            )
+            
+            # Perform fitting
+            popt, pcov = curve_fit(
+                lorentz_energy, 
+                energy, 
+                spectrum, 
+                p0=p0,
+                bounds=bounds,
+                maxfev=8000,
+                method='trf'
+            )
+            
+            # Generate fitted curve
+            y_fit = lorentz_energy(energy, *popt)
+            
+            # Calculate R-squared
+            ss_res = np.sum((spectrum - y_fit)**2)
+            ss_tot = np.sum((spectrum - spectrum.mean())**2)
+            
+            # Handle edge cases for R²
+            if ss_tot < 1e-10:  # Essentially flat spectrum
+                r2 = 0.0
+            else:
+                r2 = 1 - (ss_res / ss_tot)
+            
+            # Package parameters
+            params = {
+                'a': popt[0],    # Amplitude
+                'b1': popt[1],   # Peak energy (eV)
+                'c1': popt[2]    # FWHM (eV)
+            }
+            
+            return y_fit, params, float(r2)
+        
+        except Exception as e:
+            print(f"[warning] Fitting failed: {str(e)}")
+            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
     
     def fit_all_spectra(self):
         """
         Fit Lorentzian function to all time-point spectra
         
-        This uses the same Lorentzian fitting from spectrum_util but applied
-        to time-series data instead of spatial pixels.
-        
-        For 'single' particles: 1 Lorentzian peak
-        For 'dimer' particles: 2 Lorentzian peaks
+        This uses the same Lorentzian fitting but applied to time-series data
+        instead of spatial pixels.
         """
         print("\n[Step] Fitting Lorentzian to all time-point spectra...")
         
@@ -101,14 +191,15 @@ class EChemAnalyzer:
             print("[debug] Reversed energy array to ensure monotonic increase")
         
         # Quality filter parameters
-        max_width = self.args.get("ECHEM_MAX_WIDTH_EV", 0.15)  # Max FWHM in eV
-        min_r2 = self.args.get("ECHEM_RSQ_MIN", 0.85)  # Min R-squared
+        max_width = self.args.get("ECHEM_MAX_WIDTH_EV", 0.15)
+        min_r2 = self.args.get("ECHEM_RSQ_MIN", 0.85)
         
         # Track statistics
         stats = {
             'total': n_spectra,
             'rejected_width': 0,
             'rejected_fitting': 0,
+            'rejected_negative_r2': 0,
             'accepted': 0
         }
         
@@ -116,19 +207,45 @@ class EChemAnalyzer:
         for i in range(n_spectra):
             spectrum = self.dataset.spectra[i, :]
             
-            # Skip if spectrum is all zeros or has negative values
+            # Reverse spectrum if energy was reversed
+            if energy[0] < wavelengths[0]:
+                spectrum = spectrum[::-1]
+            
+            # Skip if spectrum is invalid
             if spectrum.max() < 0.01 or np.any(spectrum < 0):
                 print(f"  Spectrum {i}: Skipped (invalid data)")
+                self.rejected_fits.append({
+                    'index': i,
+                    'time': self.dataset.spec_times[i],
+                    'voltage': self.dataset.voltages[i],
+                    'reason': 'Invalid spectrum data',
+                    'fwhm': 0,
+                    'r2': 0
+                })
                 continue
             
-            # Fit Lorentzian using existing utility
-            # Note: fit_lorentz expects wavelength input, so we pass energy directly
+            # Fit Lorentzian using energy space
             y_fit, params, r2 = self.fit_lorentz_energy(energy, spectrum)
             
             # Extract FWHM for quality filtering
             fwhm = params.get('c1', 0)  # FWHM in eV
             
-            # Quality Filter 1: FWHM limit
+            # Quality Filter 1: Negative R² (fitting worse than mean)
+            if r2 < 0:
+                print(f"  Spectrum {i}: Rejected - R² negative ({r2:.3f})")
+                stats['rejected_negative_r2'] += 1
+                
+                self.rejected_fits.append({
+                    'index': i,
+                    'time': self.dataset.spec_times[i],
+                    'voltage': self.dataset.voltages[i],
+                    'reason': f"R² negative: {r2:.3f}",
+                    'fwhm': fwhm,
+                    'r2': r2
+                })
+                continue
+            
+            # Quality Filter 2: FWHM limit
             if fwhm > max_width:
                 print(f"  Spectrum {i}: Rejected - FWHM too large ({fwhm:.3f} eV > {max_width:.3f} eV)")
                 stats['rejected_width'] += 1
@@ -143,7 +260,7 @@ class EChemAnalyzer:
                 })
                 continue
             
-            # Quality Filter 2: R-squared limit
+            # Quality Filter 3: R-squared minimum
             if r2 < min_r2:
                 print(f"  Spectrum {i}: Rejected - R² too low ({r2:.3f} < {min_r2})")
                 stats['rejected_fitting'] += 1
@@ -182,7 +299,7 @@ class EChemAnalyzer:
                 'snr': snr,
                 'peakeV1': params.get('b1', 0),
                 'FWHMeV1': params.get('c1', 0),
-                'area1': params.get('a1', 0),
+                'area1': params.get('a', 0),
                 'peaknm1': 1239.842 / params.get('b1', 1) if params.get('b1', 0) > 0 else 0,
                 'FWHMnm1': self.convert_fwhm_ev_to_nm(params.get('b1', 0), params.get('c1', 0))
             }
@@ -198,152 +315,35 @@ class EChemAnalyzer:
         # Print filtering statistics
         print(f"\n[Filtering Statistics]")
         print(f"  Total spectra: {stats['total']}")
+        print(f"  Rejected (negative R²): {stats['rejected_negative_r2']}")
         print(f"  Rejected (FWHM > {max_width:.3f} eV): {stats['rejected_width']}")
-        print(f"  Rejected (poor fit): {stats['rejected_fitting']}")
+        print(f"  Rejected (R² < {min_r2:.3f}): {stats['rejected_fitting']}")
         print(f"  Accepted: {stats['accepted']}")
     
-        def fit_lorentz_energy(self, energy: np.ndarray, spectrum: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
-        """
-        Fit Lorentzian in energy space
-        
-        Parameters:
-        -----------
-        energy : np.ndarray
-            Energy array (eV) - MUST be monotonically increasing
-        spectrum : np.ndarray
-            Intensity array
-        
-        Returns:
-        --------
-        Tuple[np.ndarray, Dict[str, float], float]
-            - Fitted curve
-            - Parameters dict with keys: 'a', 'b1' (peak in eV), 'c1' (FWHM in eV)
-            - R-squared value
-        """
-        
-        def lorentz_energy(E, a, E0, gamma):
-            """
-            Lorentzian in energy space
-            E0: peak energy (eV)
-            gamma: FWHM (eV)
-            """
-            return (2*a/np.pi) * (gamma / (4*(E-E0)**2 + gamma**2))
-        
-        # Validate input
-        if len(spectrum) == 0 or np.all(spectrum == 0) or np.isnan(spectrum).any():
-            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
-        
-        # Initial parameter guesses
-        idx_max = np.argmax(spectrum)
-        
-        if spectrum[idx_max] <= 0:
-            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
-        
-        # Initial guesses
-        a0 = spectrum[idx_max] * np.pi / 2
-        E0 = energy[idx_max]  # Peak energy
-        
-        # Estimate FWHM
-        half_max = spectrum[idx_max] / 2
-        above_half = spectrum > half_max
-        if np.sum(above_half) > 1:
-            indices = np.where(above_half)[0]
-            gamma0 = energy[indices[-1]] - energy[indices[0]]
-        else:
-            gamma0 = 0.1  # Default FWHM: 0.1 eV
-        
-        p0 = [a0, E0, gamma0]
-        
-        try:
-            # Set bounds (energy space)
-            bounds = (
-                [0, energy.min(), 0.001],           # Lower bounds
-                [np.inf, energy.max(), 1.0]         # Upper bounds (max FWHM = 1 eV)
-            )
-            
-            # Perform fitting
-            popt, pcov = curve_fit(
-                lorentz_energy, 
-                energy, 
-                spectrum, 
-                p0=p0,
-                bounds=bounds,
-                maxfev=8000,
-                method='trf'
-            )
-            
-            # Generate fitted curve
-            y_fit = lorentz_energy(energy, *popt)
-            
-            # Calculate R-squared
-            ss_res = np.sum((spectrum - y_fit)**2)
-            ss_tot = np.sum((spectrum - spectrum.mean())**2)
-            r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-            
-            # Package parameters
-            params = {
-                'a': popt[0],    # Amplitude
-                'b1': popt[1],   # Peak energy (eV)
-                'c1': popt[2]    # FWHM (eV)
-            }
-            
-            return y_fit, params, float(r2)
-        
-        except Exception as e:
-            print(f"[warning] Fitting failed: {str(e)}")
-            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
-    
     def convert_fwhm_ev_to_nm(self, peak_ev: float, fwhm_ev: float) -> float:
-        """
-        Convert FWHM from eV to nm
-        
-        MATLAB formula: FWHMnm = 1239.842/(b-0.5*c) - 1239.842/(b+0.5*c)
-        
-        Parameters:
-        -----------
-        peak_ev : float
-            Peak energy (eV)
-        fwhm_ev : float
-            FWHM in eV
-        
-        Returns:
-        --------
-        float
-            FWHM in nm
-        """
-        if peak_ev <= 0:
+        """Convert FWHM from eV to nm using MATLAB formula"""
+        if peak_ev <= 0 or fwhm_ev <= 0:
             return 0.0
         
-        # MATLAB conversion
-        fwhm_nm = 1239.842 / (peak_ev - 0.5 * fwhm_ev) - 1239.842 / (peak_ev + 0.5 * fwhm_ev)
-        return fwhm_nm
+        try:
+            fwhm_nm = abs(1239.842 / (peak_ev - 0.5 * fwhm_ev) - 1239.842 / (peak_ev + 0.5 * fwhm_ev))
+            return fwhm_nm
+        except:
+            return 0.0
     
     def identify_cycles(self):
-        """
-        Identify experimental cycles or steps
-        
-        For CV: Find turning points where scan direction reverses
-        For CA/CC: Identify potential step transitions
-        
-        This follows MATLAB logic for finding cycle boundaries.
-        """
+        """Identify experimental cycles or steps"""
         print("\n[Step] Identifying experimental cycles...")
         
         if self.technique == 'CV':
             self.identify_cv_cycles()
         elif self.technique in ['CA', 'CC']:
-            raise NotImplementedError("This function is not implemented yet.")
-            # self.identify_ca_cc_steps()
+            raise NotImplementedError("CA/CC analysis not yet implemented")
         else:
-            raise ValueError("Invalid value passed to function.")
+            raise ValueError(f"Unknown technique: {self.technique}")
     
     def identify_cv_cycles(self):
-        """
-        Identify CV cycle boundaries from voltage trace
-        
-        Uses second derivative to find turning points where
-        scan direction reverses.
-        """
+        """Identify CV cycle boundaries from voltage trace"""
         # Extract voltages for fitted spectra only
         voltages = np.array([p['voltage'] for p in self.fitted_params])
         
@@ -359,70 +359,33 @@ class EChemAnalyzer:
         
         print(f"[info] Initial scan direction: {scan_dir}")
         
-        # Find turning points using utility function
+        # Find turning points
         turning_points = eu.find_cv_turning_points(voltages, scan_dir)
         
         print(f"[info] Found {len(turning_points)} turning points")
         print(f"[info] Turning point indices: {turning_points}")
         
-        # Store cycle boundaries
         self.cycle_boundaries = turning_points
         
-        # Calculate number of complete cycles
         n_cycles = len(turning_points) - 1
         print(f"[info] Total cycles detected: {n_cycles}")
     
-    def identify_ca_cc_steps(self):
-        """
-        Identify CA/CC step boundaries
-        
-        For chronoamperometry/chronocoulometry, steps are identified
-        by sharp voltage changes.
-        """
-        # Extract voltages for fitted spectra
-        voltages = np.array([p['voltage'] for p in self.fitted_params])
-        
-        # Find sharp transitions (derivative > threshold)
-        dv = np.abs(np.diff(voltages))
-        threshold = 0.5 * dv.max()
-        
-        step_indices = np.where(dv > threshold)[0] + 1
-        
-        # Add start and end
-        self.cycle_boundaries = [0] + list(step_indices) + [len(voltages)]
-        
-        print(f"[info] Found {len(self.cycle_boundaries)-1} CA/CC steps")
-    
     def calculate_cycle_averages(self):
-        """
-        Calculate cycle-averaged spectral parameters
-        
-        For each cycle:
-        1. Extract all spectra in the cycle
-        2. Find OCP baseline
-        3. Calculate delta parameters relative to OCP
-        4. Average across multiple cycles
-        5. Calculate standard errors
-        
-        This replicates MATLAB cycle averaging logic.
-        """
+        """Calculate cycle-averaged spectral parameters"""
         print("\n[Step] Calculating cycle-averaged parameters...")
         
         if len(self.cycle_boundaries) < 2:
             print("[warning] Not enough cycles for averaging")
             return
         
-        # Determine cycles to analyze
         n_total_cycles = len(self.cycle_boundaries) - 1
-        start_cycle = self.cycle_start - 1  # Convert to 0-indexed
+        start_cycle = self.cycle_start - 1
         end_cycle = n_total_cycles - self.cycle_backcut
         
         print(f"[info] Analyzing cycles {start_cycle+1} to {end_cycle}")
         
-        # Get length of first cycle for array initialization
         first_cycle_len = self.cycle_boundaries[start_cycle + 1] - self.cycle_boundaries[start_cycle]
         
-        # Initialize storage arrays
         n_cycles = end_cycle - start_cycle
         
         voltage_cycles = np.zeros((first_cycle_len, n_cycles))
@@ -434,15 +397,12 @@ class EChemAnalyzer:
         delta_fwhm_cycles = np.zeros((first_cycle_len, n_cycles))
         delta_intensity_cycles = np.zeros((first_cycle_len, n_cycles))
         
-        # Process each cycle
         for i in range(n_cycles):
             cycle_idx = start_cycle + i
             
-            # Get cycle boundaries
             start_idx = self.cycle_boundaries[cycle_idx]
             end_idx = self.cycle_boundaries[cycle_idx + 1]
             
-            # Handle variable cycle lengths (MATLAB compensates for ±1 differences)
             cycle_len = end_idx - start_idx
             
             if cycle_len == first_cycle_len:
@@ -455,19 +415,16 @@ class EChemAnalyzer:
                 print(f"[warning] Cycle {i+1} length mismatch: {cycle_len} vs {first_cycle_len}")
                 continue
             
-            # Extract cycle data
             cycle_params = self.fitted_params[cycle_slice]
             
             if len(cycle_params) == 0:
                 continue
             
-            # Extract parameters
             voltages = np.array([p['voltage'] for p in cycle_params])
             peaks = np.array([p['peakeV1'] for p in cycle_params])
             fwhms = np.array([p['FWHMeV1'] for p in cycle_params])
             intensities = np.array([p['area1'] for p in cycle_params])
             
-            # Pad if needed
             actual_len = len(voltages)
             if actual_len < first_cycle_len:
                 voltages = np.pad(voltages, (0, first_cycle_len - actual_len), mode='edge')
@@ -475,13 +432,11 @@ class EChemAnalyzer:
                 fwhms = np.pad(fwhms, (0, first_cycle_len - actual_len), mode='edge')
                 intensities = np.pad(intensities, (0, first_cycle_len - actual_len), mode='edge')
             
-            # Store raw values
             voltage_cycles[:, i] = voltages[:first_cycle_len]
             peak_cycles[:, i] = peaks[:first_cycle_len]
             fwhm_cycles[:, i] = fwhms[:first_cycle_len]
             intensity_cycles[:, i] = intensities[:first_cycle_len]
             
-            # Find OCP baseline (first cycle only)
             if i == 0:
                 half_cycle = len(voltages) // 2
                 ocp_distances = np.abs(voltages[:half_cycle] - self.ocp)
@@ -489,12 +444,10 @@ class EChemAnalyzer:
                 
                 print(f"[info] OCP index: {self.ocp_index}, V={voltages[self.ocp_index]:.3f} V")
             
-            # Calculate delta parameters
             delta_peak_cycles[:, i] = peaks[:first_cycle_len] - peaks[self.ocp_index]
             delta_fwhm_cycles[:, i] = fwhms[:first_cycle_len] - fwhms[self.ocp_index]
             delta_intensity_cycles[:, i] = (intensities[:first_cycle_len] - intensities[self.ocp_index]) / intensities[self.ocp_index] * 100
         
-        # Calculate cycle averages and standard errors
         voltage_avg = voltage_cycles.mean(axis=1)
         
         peak_avg = peak_cycles.mean(axis=1)
@@ -512,7 +465,6 @@ class EChemAnalyzer:
         delta_intensity_avg = delta_intensity_cycles.mean(axis=1)
         delta_intensity_se = delta_intensity_cycles.std(axis=1, ddof=1) / np.sqrt(n_cycles)
         
-        # Store averaged cycle
         self.cycles.append({
             'voltage_avg': voltage_avg,
             'peak_avg': peak_avg,
@@ -532,24 +484,18 @@ class EChemAnalyzer:
         print(f"[info] Calculated averages over {n_cycles} cycles")
     
     def plot_overview(self):
-        """
-        Generate overview plot showing all time-series data
-        
-        This creates a multi-panel figure similar to MATLAB plt1.
-        """
+        """Generate overview plot showing all time-series data"""
         print("\n[Step] Generating overview plot...")
         
         output_dir = self.dataset.echem_output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Extract data arrays
         times = np.array([p['time'] for p in self.fitted_params])
         voltages = np.array([p['voltage'] for p in self.fitted_params])
         peaks = np.array([p['peakeV1'] for p in self.fitted_params])
         fwhms = np.array([p['FWHMeV1'] for p in self.fitted_params])
         areas = np.array([p['area1'] for p in self.fitted_params])
         
-        # Calculate intensity change if we have OCP baseline
         if hasattr(self, 'ocp_index') and self.ocp_index < len(areas):
             baseline_area = areas[self.ocp_index]
             intensity_change = (areas - baseline_area) / baseline_area * 100
@@ -557,10 +503,8 @@ class EChemAnalyzer:
             baseline_area = areas[0] if len(areas) > 0 else 1.0
             intensity_change = (areas - baseline_area) / baseline_area * 100
         
-        # Create figure with 5 subplots
         fig, axes = plt.subplots(5, 1, figsize=(10, 12), sharex=True)
         
-        # Panel 1: Spectral heatmap
         im = axes[0].imshow(self.dataset.spectra.T, aspect='auto', cmap='hot',
                           extent=[times.min(), times.max(),
                                  self.dataset.wavelengths.min(), 
@@ -571,25 +515,21 @@ class EChemAnalyzer:
         cbar1 = plt.colorbar(im, ax=axes[0])
         cbar1.set_label('Intensity (a.u.)', fontsize=10)
         
-        # Panel 2: Resonance energy
         axes[1].scatter(times, peaks, c='red', s=20, marker='d', linewidth=1.4)
         axes[1].set_ylabel('Resonance (eV)', fontsize=12, fontweight='bold')
         axes[1].tick_params(labelsize=10)
         axes[1].grid(True, alpha=0.3)
         
-        # Panel 3: FWHM
         axes[2].scatter(times, fwhms, c='red', s=17, marker='d', linewidth=1.4)
         axes[2].set_ylabel('FWHM (eV)', fontsize=12, fontweight='bold')
         axes[2].tick_params(labelsize=10)
         axes[2].grid(True, alpha=0.3)
         
-        # Panel 4: Intensity change
         axes[3].scatter(times, intensity_change, c='red', s=20, marker='d', linewidth=1.4)
         axes[3].set_ylabel('Intensity change (%)', fontsize=12, fontweight='bold')
         axes[3].tick_params(labelsize=10)
         axes[3].grid(True, alpha=0.3)
         
-        # Panel 5: Applied voltage
         axes[4].plot(times, voltages, 'r-', linewidth=1.4)
         axes[4].set_ylabel('E (V)', fontsize=12, fontweight='bold')
         axes[4].set_xlabel('Elapsed Time (s)', fontsize=12, fontweight='bold')
@@ -605,12 +545,7 @@ class EChemAnalyzer:
         print(f"[info] Saved overview plot: {output_path}")
     
     def plot_cycles(self):
-        """
-        Generate cycle-averaged plots with error bars
-        
-        This creates plots showing delta parameters vs voltage
-        similar to MATLAB style plots.
-        """
+        """Generate cycle-averaged plots with error bars"""
         if len(self.cycles) == 0:
             print("[warning] No cycle data available for plotting")
             return
@@ -619,15 +554,13 @@ class EChemAnalyzer:
         
         output_dir = Path(self.args['OUTPUT_DIR'])
         
-        cycle = self.cycles[0]  # Use first (and typically only) averaged cycle
+        cycle = self.cycles[0]
         
-        # Create figure with 3 subplots
         fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
         
         voltage = cycle['voltage_avg']
         
-        # Panel 1: Delta Peak Energy
-        axes[0].errorbar(voltage, cycle['delta_peak_avg'] * 1000,  # Convert to meV
+        axes[0].errorbar(voltage, cycle['delta_peak_avg'] * 1000,
                         yerr=cycle['delta_peak_se'] * 1000,
                         fmt='o-', color='blue', linewidth=2, markersize=6,
                         capsize=4, capthick=1.5)
@@ -636,8 +569,7 @@ class EChemAnalyzer:
         axes[0].tick_params(labelsize=11)
         axes[0].axhline(0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
         
-        # Panel 2: Delta FWHM
-        axes[1].errorbar(voltage, cycle['delta_fwhm_avg'] * 1000,  # Convert to meV
+        axes[1].errorbar(voltage, cycle['delta_fwhm_avg'] * 1000,
                         yerr=cycle['delta_fwhm_se'] * 1000,
                         fmt='o-', color='blue', linewidth=2, markersize=6,
                         capsize=4, capthick=1.5)
@@ -646,7 +578,6 @@ class EChemAnalyzer:
         axes[1].tick_params(labelsize=11)
         axes[1].axhline(0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
         
-        # Panel 3: Delta Intensity
         axes[2].errorbar(voltage, cycle['delta_intensity_avg'],
                         yerr=cycle['delta_intensity_se'],
                         fmt='o-', color='blue', linewidth=2, markersize=6,
@@ -657,7 +588,6 @@ class EChemAnalyzer:
         axes[2].tick_params(labelsize=11)
         axes[2].axhline(0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
         
-        # Add title
         fig.suptitle(f'{self.dataset.sample_name} - Cycle-Averaged Parameters (n={cycle["n_cycles"]})', 
                     fontsize=14, fontweight='bold', y=0.995)
         
@@ -670,9 +600,7 @@ class EChemAnalyzer:
         print(f"[info] Saved cycle-averaged plot: {output_path}")
     
     def save_spectra_data(self):
-        """
-        Export spectral data and fitted parameters to text files
-        """
+        """Export spectral data and fitted parameters to text files"""
         print("\n[Step] Saving spectral data...")
         
         output_dir = Path(self.args['OUTPUT_DIR']) / "spectra"
@@ -680,48 +608,40 @@ class EChemAnalyzer:
 
         output_unit = self.args.get('OUTPUT_UNIT', 'eV')
         
-        # Save individual spectra with fits
         for i, param in enumerate(self.fitted_params):
             
             if output_unit == 'nm':
+                data = np.column_stack((self.dataset.wavelengths, param['spectrum'], param['fit']))
 
-                data = np.column_stack((self.dataset.wavelengths, param['spectrum'][::-1], param['fit'][::-1]))
-
-                header = f"Wavelength (nm)\tIntensity\tFit\n"
+                header = f"Wavelength(nm)\tIntensity\tFit\n"
                 header += f"# Peak: {param['peaknm1']:.1f} nm, FWHM: {param['FWHMnm1']:.1f} nm\n"
                 header += f"# Spectrum {i+1}, Time={param['time']:.2f}s, Voltage={param['voltage']:.3f}V\n"
                 header += f"# R²: {param['r2']:.4f}, SNR: {param['snr']:.1f}"
 
             else:
-                # Prepare data array
                 energy = 1239.842 / self.dataset.wavelengths
                 data = np.column_stack((
-                    self.dataset.wavelengths,
                     energy,
                     param['spectrum'],
                     param['fit']
                 ))
 
-                header = f"Energy (eV)\tIntensity\tFit\n"
+                header = f"Energy(eV)\tIntensity\tFit\n"
                 header += f"# Peak: {param['peakeV1']:.3f} eV, FWHM: {param['FWHMeV1']:.3f} eV\n"
                 header += f"# Spectrum {i+1}, Time={param['time']:.2f}s, Voltage={param['voltage']:.3f}V\n"
                 header += f"# R²: {param['r2']:.4f}, SNR: {param['snr']:.1f}"
             
-            # Save file
             output_file = output_dir / f"{self.dataset.sample_name}_spectrum_{i+1:04d}.txt"
             np.savetxt(output_file, data, delimiter='\t', header=header, 
                       comments='', fmt='%.6f')
         
         print(f"[info] Saved {len(self.fitted_params)} spectral files to {output_dir}")
         
-        # Save cycle-averaged data using utility function
         if len(self.cycles) > 0:
             eu.save_echem_cycle_data(self.cycles, output_dir, self.dataset.sample_name)
     
     def dump_results(self):
-        """
-        Save all analysis results to pickle file
-        """
+        """Save all analysis results to pickle file"""
         output_path = Path(self.args['OUTPUT_DIR']) / f"{self.dataset.sample_name}_echem_results.pkl"
         
         payload = {
@@ -746,9 +666,7 @@ class EChemAnalyzer:
         print(f"\n[info] Results saved to: {output_path}")
     
     def print_summary(self):
-        """
-        Print comprehensive analysis summary
-        """
+        """Print comprehensive analysis summary"""
         print("\n" + "="*60)
         print("ECHEM ANALYSIS SUMMARY")
         print("="*60)
@@ -758,8 +676,18 @@ class EChemAnalyzer:
         print(f"Successfully fitted: {len(self.fitted_params)}")
         print(f"Rejected fits: {len(self.rejected_fits)}")
         
+        # Rejection breakdown
+        if len(self.rejected_fits) > 0:
+            negative_r2 = len([r for r in self.rejected_fits if 'negative' in r['reason'].lower()])
+            width_rejected = len([r for r in self.rejected_fits if 'FWHM' in r['reason']])
+            low_r2 = len([r for r in self.rejected_fits if 'too low' in r['reason']])
+            
+            print(f"\n[Rejection Breakdown]")
+            print(f"  Negative R²: {negative_r2}")
+            print(f"  FWHM too large: {width_rejected}")
+            print(f"  R² too low: {low_r2}")
+        
         if len(self.fitted_params) > 0:
-            # Extract parameters
             peaks = [p['peakeV1'] for p in self.fitted_params]
             fwhms = [p['FWHMeV1'] for p in self.fitted_params]
             snrs = [p['snr'] for p in self.fitted_params]
