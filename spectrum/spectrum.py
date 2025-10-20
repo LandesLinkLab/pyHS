@@ -7,7 +7,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional, Any, Union
 
-import spectrum_util as su
+from . import spectrum_util as su
 
 class SpectrumAnalyzer:
     """
@@ -418,7 +418,7 @@ class SpectrumAnalyzer:
         
         if self.representatives:
 
-            output_unit = self.args.get('OUTPUT_UNIT')
+            output_unit = self.args.get('OUTPUT_UNIT', 'eV')
 
             if output_unit == 'eV':
 
@@ -507,7 +507,7 @@ class SpectrumAnalyzer:
             'representatives': self.representatives,
             'rejected_spectra': self.rejected_spectra,
             'config': self.args,
-            'output_unit': self.args.get('OUTPUT_UNIT')
+            'output_unit': self.args.get('OUTPUT_UNIT', 'eV'),
             'analysis_date': str(datetime.now().strftime("%m-%d-%Y %H:%M:%S"))
         }
         

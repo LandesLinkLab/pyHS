@@ -1,6 +1,7 @@
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
+from scipy.spatial import KDTree
 from typing import List, Dict, Tuple, Optional, Any
 
 def parse_chi_file(chi_path: str) -> Dict[str, Any]:
@@ -22,7 +23,7 @@ def parse_chi_file(chi_path: str) -> Dict[str, Any]:
         Dictionary containing:
         - 'technique': str - 'CV', 'CA', or 'CC'
         - 'parameters': dict - technique-specific parameters
-        - 'data': np.ndarray - (N, 4) array of [time, potential, current, charge]
+        - 'data': np.ndarray - (N, 4) array of [potential, current, charge, time]
         - 'headers': list - original header lines for reference
     """
     
@@ -34,24 +35,32 @@ def parse_chi_file(chi_path: str) -> Dict[str, Any]:
     data_start_idx = None
     
     for i, line in enumerate(lines):
-        if line.strip().startswith('#') or not line.strip():
+        line_stripped = line.strip()
+        
+        # Skip empty lines
+        if not line_stripped:
             continue
-        # Look for data section (typically starts with numeric values)
-        try:
-            float(line.split()[0])
-            data_start_idx = i
+            
+        # Look for data header: "Potential/V    Current/A   Charge/C    Time/s"
+        if 'Potential/V' in line and 'Current/A' in line:
+            print(f"[debug] Found data header at line {i}: {line_stripped}")
+            data_start_idx = i + 1  # Data starts on next line
             break
-        except (ValueError, IndexError):
-            headers.append(line.strip())
+        
+        # Collect header lines
+        headers.append(line_stripped)
+    
+    if data_start_idx is None:
+        raise RuntimeError("Could not find data section in CHI file (no 'Potential/V' header)")
     
     # Determine technique type from headers
     technique = None
     if any('Cyclic' in h for h in headers):
         technique = 'CV'
     elif any('coulometry' in h.lower() for h in headers):
-        technique = 'CA'  # Chronocoulometry
+        technique = 'CA'
     elif any('amp' in h.lower() for h in headers):
-        technique = 'CA'  # Chronoamperometry
+        technique = 'CA'
     else:
         technique = 'Unknown'
     
@@ -60,35 +69,42 @@ def parse_chi_file(chi_path: str) -> Dict[str, Any]:
     for header in headers:
         if '=' in header:
             try:
-                key_val = header.split('=')
-                key = key_val[0].strip()
-                val = key_val[1].strip()
-                
-                # Try to convert to float
-                try:
-                    params[key] = float(val)
-                except ValueError:
-                    params[key] = val
+                parts = header.split('=')
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    val = parts[1].strip()
+                    
+                    # Try to convert to float
+                    try:
+                        params[key] = float(val)
+                    except ValueError:
+                        params[key] = val
             except:
                 continue
     
     # Load numerical data
+    # Format: Potential/V   Current/A   Charge/C    Time/s
     try:
-        # Data typically has columns: [time, potential, current, charge]
         data = np.loadtxt(chi_path, skiprows=data_start_idx, delimiter='\t')
         
         # Ensure 2D array
         if data.ndim == 1:
             data = data.reshape(1, -1)
+        
+        print(f"[debug] Loaded CHI data: {data.shape[0]} rows, {data.shape[1]} columns")
+        
+        # Validate data shape (should have 4 columns)
+        if data.shape[1] != 4:
+            print(f"[warning] Expected 4 columns, got {data.shape[1]}")
             
     except Exception as e:
-        print(f"[warning] Could not parse data from {chi_path}: {e}")
+        print(f"[warning] Could not parse numerical data from {chi_path}: {e}")
         data = np.array([])
     
     return {
         'technique': technique,
         'parameters': params,
-        'data': data,
+        'data': data,  # Column order: [potential, current, charge, time]
         'headers': headers
     }
 
@@ -148,27 +164,7 @@ def match_spectra_to_voltage(spec_times: np.ndarray,
                              chi_voltages: np.ndarray) -> np.ndarray:
     """
     Match spectral acquisition times to potentiostat voltage values
-    
-    Since spectral measurements and potentiostat data are acquired
-    independently, this function synchronizes them by finding the
-    nearest voltage value for each spectrum time point.
-    
-    Parameters:
-    -----------
-    spec_times : np.ndarray
-        Time stamps when spectra were acquired
-    chi_times : np.ndarray
-        Time stamps from potentiostat
-    chi_voltages : np.ndarray
-        Voltage values from potentiostat
-    
-    Returns:
-    --------
-    np.ndarray
-        Voltage values corresponding to each spectrum time
     """
-    
-    from scipy.spatial import KDTree
     
     # Create KDTree for fast nearest neighbor search
     tree = KDTree(chi_times.reshape(-1, 1))

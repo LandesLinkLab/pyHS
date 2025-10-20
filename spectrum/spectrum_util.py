@@ -309,7 +309,7 @@ def save_dfs_particle_map(max_map: np.ndarray,
                 fontweight='bold',
                 bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
         
-        if output_unit == 'eV'
+        if output_unit == 'eV':
             energy = 1239.842 / rep['peak_wl']
             
             ax.text(col - 3, row - 3,

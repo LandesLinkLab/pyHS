@@ -7,6 +7,7 @@ from typing import List, Dict, Tuple, Optional, Any, Union
 from nptdms import TdmsFile
 
 import data.dataset_util as du
+from echem import echem_util as eu
 
 class Dataset(object):
     """
@@ -227,77 +228,86 @@ class Dataset(object):
         
         td = TdmsFile.read(tdms_path)
         
-        # Extract wavelength array from Info group
-        info_group = td['Info']
-        if info_group is None:
-            raise RuntimeError("No 'Info' group found in EChem TDMS file")
+        # EChem TDMS 구조:
+        # - Group 0: 시계열 스펙트럼 (N개 채널, 각 1340 points)
+        # - Group 1: 시간 배열 (1개 채널, N points)
+        # - Group 2: 배경 스펙트럼 (1개 채널, 1340 points)
+        # - Group 3: 파장 배열 (1개 채널, 670 points)
         
-        wl_channel = None
-        for ch in info_group.channels():
-            if ch.name == 'wvlths':
-                wl_channel = ch
-                break
+        groups = list(td.groups())
         
-        if wl_channel is None:
-            raise RuntimeError("No 'wvlths' channel found in Info group")
+        print(f"[debug] Found {len(groups)} groups in TDMS file")
+        for i, group in enumerate(groups):
+            n_channels = len(list(group.channels()))
+            print(f"  Group {i}: {n_channels} channels")
         
-        self.wvl = wl_channel[:].astype(np.float32)
-        self.wavelengths = self.wvl  # Alias for EChem compatibility
+        # ===== 1. 파장 배열 추출 (Group 3) =====
+        if len(groups) < 4:
+            raise RuntimeError(f"Expected 4 groups, found {len(groups)}")
         
-        # Extract background spectrum
-        bg_channel = None
-        for ch in info_group.channels():
-            if 'bg' in ch.name.lower() or 'background' in ch.name.lower():
-                bg_channel = ch
-                break
+        wl_group = groups[3]
+        wl_channels = list(wl_group.channels())
+        if len(wl_channels) != 1:
+            raise RuntimeError(f"Expected 1 wavelength channel, found {len(wl_channels)}")
         
-        if bg_channel is None:
-            print("[warning] No background channel found, will use zeros")
-            self.background = np.zeros_like(self.wvl)
-        else:
-            bg_raw = bg_channel[:].astype(np.float32)
-            wvgrp = td.properties.get('wvlth group', 1)
-            if wvgrp == 2:
-                self.background = bg_raw
-            else:
-                self.background = bg_raw[::2] + bg_raw[1::2]
-        
-        # Extract time stamps
-        time_channel = None
-        for ch in info_group.channels():
-            if 'time' in ch.name.lower():
-                time_channel = ch
-                break
-        
-        if time_channel is None:
-            print("[warning] No time channel found, will use indices")
-            self.spec_times = None
-        else:
-            self.spec_times = time_channel[:].astype(np.float32)
+        self.wvl = wl_channels[0][:].astype(np.float32)
+        self.wavelengths = self.wvl
         
         print(f"[info] Wavelength array: {self.wvl.min():.1f}-{self.wvl.max():.1f} nm, "
               f"{len(self.wvl)} points")
         
-        # Extract spectra from Spectra group
-        spectra_group = td['Spectra']
-        if spectra_group is None:
-            raise RuntimeError("No 'Spectra' group found in EChem TDMS file")
+        # ===== 2. 배경 스펙트럼 추출 (Group 2) =====
+        bg_group = groups[2]
+        bg_channels = list(bg_group.channels())
+        if len(bg_channels) != 1:
+            raise RuntimeError(f"Expected 1 background channel, found {len(bg_channels)}")
         
-        spec_channels = list(spectra_group.channels())
+        bg_raw = bg_channels[0][:].astype(np.float32)
+        
+        # Wavelength grouping 확인
+        wvgrp = td.properties.get('wvlth group', 1)
+        print(f"[debug] Wavelength group: {wvgrp}")
+        
+        if wvgrp == 2:
+            self.background = bg_raw
+        else:
+            # Adjacent wavelength averaging
+            self.background = bg_raw[::2] + bg_raw[1::2]
+        
+        print(f"[info] Background spectrum: {len(self.background)} points")
+        
+        # ===== 3. 시간 배열 추출 (Group 1) =====
+        time_group = groups[1]
+        time_channels = list(time_group.channels())
+        if len(time_channels) != 1:
+            raise RuntimeError(f"Expected 1 time channel, found {len(time_channels)}")
+        
+        self.spec_times = time_channels[0][:].astype(np.float32)
+        
+        print(f"[info] Time array: {self.spec_times.min():.2f} - {self.spec_times.max():.2f} s, "
+              f"{len(self.spec_times)} points")
+        
+        # ===== 4. 스펙트럼 데이터 추출 (Group 0) =====
+        spec_group = groups[0]
+        spec_channels = list(spec_group.channels())
         n_spectra = len(spec_channels)
         
         print(f"[info] Found {n_spectra} time-point spectra")
         
-        # Check wavelength grouping
-        wvgrp = td.properties.get('wvlth group', 1)
+        # 시간 배열과 스펙트럼 개수가 일치하는지 확인
+        if len(self.spec_times) != n_spectra:
+            print(f"[warning] Time array length ({len(self.spec_times)}) != "
+                  f"number of spectra ({n_spectra})")
+            print(f"[warning] Using spectrum count as reference")
+            self.spec_times = np.arange(n_spectra, dtype=np.float32)
         
-        # Initialize spectra array
+        # 스펙트럼 배열 초기화
         if wvgrp == 2:
             self.spectra = np.zeros((n_spectra, len(self.wvl)), dtype=np.float32)
         else:
             self.spectra = np.zeros((n_spectra, len(self.background)), dtype=np.float32)
         
-        # Load each spectrum
+        # 각 스펙트럼 로드
         for i, ch in enumerate(spec_channels):
             spec_data = ch[:].astype(np.float32)
             
@@ -310,16 +320,10 @@ class Dataset(object):
             if i % 50 == 0:
                 print(f"  Loading spectrum {i}/{n_spectra}...")
         
-        # Create time array if not found in file
-        if self.spec_times is None:
-            self.spec_times = np.arange(n_spectra, dtype=np.float32)
-            print("[info] Created synthetic time array (indices)")
-        
         # For EChem, cube is just the 2D spectra array
         self.cube = self.spectra
         
         print(f"[debug] Loaded spectra shape: {self.spectra.shape}")
-        print(f"[debug] Time array: {self.spec_times.min():.2f} - {self.spec_times.max():.2f} s")
         print(f"[debug] Spectral data range: [{self.spectra.min():.2f}, {self.spectra.max():.2f}]")
     
     def load_chi_data(self):
@@ -345,9 +349,7 @@ class Dataset(object):
             print(f"[info] Voltage range: {chi_voltages.min():.3f} - {chi_voltages.max():.3f} V")
     
     def match_voltage_to_spectra(self):
-        """Synchronize spectra with voltage values (EChem mode)"""
-        from echem import echem_util as eu
-        
+       
         print(f"\n[debug] Matching spectra times to voltage values...")
         
         if len(self.chi_data['data']) == 0:
@@ -355,8 +357,9 @@ class Dataset(object):
             self.voltages = np.zeros(len(self.spec_times))
             return
         
-        chi_times = self.chi_data['data'][:, 0]
-        chi_voltages = self.chi_data['data'][:, 1]
+        # CHI data columns: [potential, current, charge, time]
+        chi_voltages = self.chi_data['data'][:, 0]  # Column 0 = Potential
+        chi_times = self.chi_data['data'][:, 3]     # Column 3 = Time
         
         self.voltages = eu.match_spectra_to_voltage(
             self.spec_times, chi_times, chi_voltages
@@ -364,6 +367,7 @@ class Dataset(object):
         
         print(f"[info] Matched voltages: {self.voltages.min():.3f} - {self.voltages.max():.3f} V")
         print(f"[info] Matched {len(self.voltages)} spectra to voltage values")
+
     
     def apply_flatfield_echem(self):
         """Apply flatfield correction (EChem mode)"""

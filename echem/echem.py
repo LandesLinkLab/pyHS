@@ -48,6 +48,7 @@ class EChemAnalyzer:
         self.cycle_backcut = args.get('ECHEM_CYCLE_BACKCUT', 0)  # Cycles to exclude at end
         
         # Results storage
+        self.cycle_boundaries = []
         self.fitted_params = []  # Fitted parameters for each time point
         self.cycles = []  # Cycle-averaged data
         self.rejected_fits = []  # Rejected fits for debugging
