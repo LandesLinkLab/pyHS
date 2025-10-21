@@ -208,7 +208,7 @@ class EChemAnalyzer:
             spectrum = self.dataset.spectra[i, :]
             
             # Reverse spectrum if energy was reversed
-            if energy[0] < wavelengths[0]:
+            if energy[-1] > energy[0]:
                 spectrum = spectrum[::-1]
             
             # Skip if spectrum is invalid
