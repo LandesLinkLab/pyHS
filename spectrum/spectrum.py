@@ -281,6 +281,7 @@ class SpectrumAnalyzer:
         
         This method:
         - Creates MATLAB-style plots for each valid representative spectrum
+        - Saves two versions: with fit (plots/) and raw only (plots_raw/)
         - Shows both experimental data and Lorentzian fit
         - Includes key parameters (wavelength, FWHM, SNR) as text annotations
         - Saves high-resolution plots to the output directory
@@ -291,22 +292,46 @@ class SpectrumAnalyzer:
         out_dir = Path(self.args['OUTPUT_DIR'])
         out_dir.mkdir(parents=True, exist_ok=True)
         
+        # Create subdirectories for different plot types
+        plots_dir = out_dir / "plots"
+        plots_raw_dir = out_dir / "plots_raw"
+        plots_dir.mkdir(parents=True, exist_ok=True)
+        plots_raw_dir.mkdir(parents=True, exist_ok=True)
+        
         for i, rep in enumerate(self.representatives):
             # Generate sequential particle numbers for consistent naming
             particle_num = i + 1
             
-            # Create individual spectrum plot using utility function
+            # Plot 1: With fitted curve (plots/)
             su.plot_spectrum(
                 self.dataset.wvl,           # Wavelength array
                 rep['spectrum'],            # Experimental spectrum
                 rep['fit'],                 # Lorentzian fit
                 f"Particle {particle_num} (Cluster {rep['cluster_label']})", # Title
-                out_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.png", # Output path
+                plots_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.png", # Output path
                 dpi=self.args["FIG_DPI"],   # Resolution
                 params=rep['params'],       # Fitting parameters
                 snr=rep['snr'],            # Signal-to-noise ratio
-                args=self.args             # Additional configuration
+                args=self.args,            # Additional configuration
+                show_fit=True              # Show fit curve
             )
+            
+            # Plot 2: Raw data only (plots_raw/)
+            su.plot_spectrum(
+                self.dataset.wvl,           # Wavelength array
+                rep['spectrum'],            # Experimental spectrum
+                rep['fit'],                 # Lorentzian fit (not displayed)
+                f"Particle {particle_num} (Cluster {rep['cluster_label']})", # Title
+                plots_raw_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.png", # Output path
+                dpi=self.args["FIG_DPI"],   # Resolution
+                params=None,                # No parameter annotations
+                snr=None,                   # No SNR annotation
+                args=self.args,            # Additional configuration
+                show_fit=False             # Hide fit curve
+            )
+        
+        print(f"[info] Saved {len(self.representatives)} plots with fit to {plots_dir}")
+        print(f"[info] Saved {len(self.representatives)} raw-only plots to {plots_raw_dir}")
     
     def save_dfs_particle_map(self):
         """
@@ -352,19 +377,21 @@ class SpectrumAnalyzer:
         
         out_dir = Path(self.args['OUTPUT_DIR']) / "spectra"
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        output_unit = self.args.get('OUTPUT_UNIT')
         
         for i, rep in enumerate(self.representatives):
             # Generate sequential particle numbers
             particle_num = i + 1
-            
+           
             if output_unit == 'eV':
 
                 energy = 1239.842 / self.dataset.wvl
                 energy = energy[::-1]
                 spectrum = rep['spectrum'][::-1]
-                fit = ref['fit'][::-1]
+                fit = rep['fit'][::-1]
 
-                data = np.column_stack(energy, spectrum, fit)
+                data = np.column_stack((energy, spectrum, fit))
 
                 peak_ev = 1239.842 / rep['peak_wl']
                 peak_nm = rep['peak_wl']

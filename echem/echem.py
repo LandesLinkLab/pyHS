@@ -608,9 +608,11 @@ class EChemAnalyzer:
         output_dir = Path(self.args['OUTPUT_DIR']) / "spectra"
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create plots subdirectory for images
+        # Create subdirectories for different plot types
         plots_dir = output_dir / "plots"
+        plots_raw_dir = output_dir / "plots_raw"
         plots_dir.mkdir(parents=True, exist_ok=True)
+        plots_raw_dir.mkdir(parents=True, exist_ok=True)
 
         output_unit = self.args.get('OUTPUT_UNIT', 'eV')
         
@@ -650,37 +652,52 @@ class EChemAnalyzer:
             np.savetxt(output_file, data, delimiter='\t', header=header, 
                       comments='', fmt='%.6f')
             
-            # ===== Generate visualization plot =====
+            # ===== Generate visualization plots =====
             # Create plot title with time and voltage info
             plot_title = f"Spectrum {i+1} | t={param['time']:.1f}s, V={param['voltage']:.3f}V"
             
-            # Output path for plot
+            # Plot 1: With fitted curve (plots/)
             plot_path = plots_dir / f"{self.dataset.sample_name}_spectrum_{i+1:04d}.png"
-            
-            # Generate plot using spectrum_util
-            # IMPORTANT: Pass original arrays - plot_spectrum() will handle reversal internally
             su.plot_spectrum(
-                self.dataset.wavelengths,   # Original wavelength array (not reversed)
-                param['spectrum'],          # Original spectrum (not reversed)
-                param['fit'],              # Original fit (not reversed)
+                self.dataset.wavelengths,   # Original wavelength array
+                param['spectrum'],          # Original spectrum
+                param['fit'],              # Original fit
                 plot_title,                # Title with time/voltage
                 plot_path,                 # Output path
                 dpi=self.args.get("FIG_DPI", 300),  # Resolution
                 params=param['params'],    # Fitting parameters
                 snr=param['snr'],         # Signal-to-noise ratio
-                args=self.args            # Configuration
+                args=self.args,           # Configuration
+                show_fit=True             # Show fit curve
+            )
+            
+            # Plot 2: Raw data only (plots_raw/)
+            plot_path_raw = plots_raw_dir / f"{self.dataset.sample_name}_spectrum_{i+1:04d}.png"
+            su.plot_spectrum(
+                self.dataset.wavelengths,   # Original wavelength array
+                param['spectrum'],          # Original spectrum
+                param['fit'],              # Original fit (not displayed)
+                plot_title,                # Title with time/voltage
+                plot_path_raw,            # Output path
+                dpi=self.args.get("FIG_DPI", 300),  # Resolution
+                params=None,               # No parameter annotations
+                snr=None,                  # No SNR annotation
+                args=self.args,           # Configuration
+                show_fit=False            # Hide fit curve
             )
             
             # Progress indicator
             if (i + 1) % 10 == 0 or (i + 1) == len(self.fitted_params):
-                print(f"  Saved {i+1}/{len(self.fitted_params)} spectra (text + plot)")
+                print(f"  Saved {i+1}/{len(self.fitted_params)} spectra (text + 2 plots)")
         
         print(f"[info] Saved {len(self.fitted_params)} spectral files to {output_dir}")
-        print(f"[info] Saved {len(self.fitted_params)} spectral plots to {plots_dir}")
+        print(f"[info] Saved {len(self.fitted_params)} plots with fit to {plots_dir}")
+        print(f"[info] Saved {len(self.fitted_params)} raw-only plots to {plots_raw_dir}")
         
         # Save cycle-averaged data using utility function
         if len(self.cycles) > 0:
             eu.save_echem_cycle_data(self.cycles, output_dir, self.dataset.sample_name)
+
     
     def dump_results(self):
         """Save all analysis results to pickle file"""

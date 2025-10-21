@@ -118,7 +118,8 @@ def plot_spectrum(x: np.ndarray,
                 dpi: int = 300, 
                 params: Optional[Dict[str, float]] = None, 
                 snr: Optional[float] = None,
-                args: Optional[Dict[str, Any]] = None) -> None:
+                args: Optional[Dict[str, Any]] = None,
+                show_fit: bool = True) -> None:
     """
     Create publication-quality spectrum plot identical to MATLAB version
     
@@ -149,37 +150,36 @@ def plot_spectrum(x: np.ndarray,
         Signal-to-noise ratio for annotation
     args : Optional[Dict[str, Any]]
         Additional configuration parameters
+    show_fit : bool
+        Whether to show fitted curve (default: True)
     """
     fig, ax = plt.subplots(figsize=(8, 6))
 
     output_unit = args.get('OUTPUT_UNIT')
 
     if output_unit == 'eV':
-
         x = 1239.842 / x
         x = x[::-1]
         y = y[::-1]
-        y_fit = y_fit
+        y_fit = y_fit[::-1]
 
     elif output_unit == 'nm':
-
         pass
 
     else:
-
         raise ValueError("Invalid x-axis unit")
     
-    # Plot data and fit with MATLAB-style formatting
-    ax.plot(x, y, 'b-', linewidth=3, label='Data')           # Blue solid line for data
-    ax.plot(x, y_fit, 'k--', linewidth=3, label='Lorentz fit') # Black dashed line for fit
+    # Plot data
+    ax.plot(x, y, 'b-', linewidth=3, label='Data')
+    
+    # Plot fit if requested
+    if show_fit:
+        ax.plot(x, y_fit, 'k--', linewidth=3, label='Lorentz fit')
     
     # Axis labels with large font sizes (MATLAB-compatible)
     if output_unit == 'eV':
-
         ax.set_xlabel('Energy (eV)', fontsize=32)
-
     else:
-
         ax.set_xlabel('Wavelength (nm)', fontsize=32)
 
     ax.set_ylabel('Scattering', fontsize=32)
@@ -191,9 +191,8 @@ def plot_spectrum(x: np.ndarray,
     ax.spines['top'].set_visible(True)
     ax.spines['right'].set_visible(True)
     
-    # Add parameter text annotations if available
-    if params is not None and snr is not None:
-
+    # Add parameter text annotations if available and showing fit
+    if show_fit and params is not None and snr is not None:
         lambda_max_nm = params.get('b1', 0)  # Center wavelength
         lambda_max_ev = 1239.842 / lambda_max_nm
         gamma_nm = params.get('c1', 0)       # FWHM
@@ -201,31 +200,24 @@ def plot_spectrum(x: np.ndarray,
         
         # Position annotations in upper right area
         if output_unit == 'nm':
-
             ax.text(0.55, 0.9, f'λ_max = {lambda_max_nm:.0f} nm', transform=ax.transAxes, fontsize=20)
             ax.text(0.55, 0.78, f'Γ = {gamma_nm:.0f} nm', transform=ax.transAxes, fontsize=20)
             ax.text(0.55, 0.66, f'S/N = {snr:.0f}', transform=ax.transAxes, fontsize=20)
 
         elif output_unit == 'eV':
-
-            ax.text(0.55, 0.9, f'E_max = {lambda_max_ev:.3f} nm', transform=ax.transAxes, fontsize=20)
-            ax.text(0.55, 0.78, f'Γ = {gamma_ev:.0f} nm', transform=ax.transAxes, fontsize=20)
+            ax.text(0.55, 0.9, f'E_max = {lambda_max_ev:.3f} eV', transform=ax.transAxes, fontsize=20)
+            ax.text(0.55, 0.78, f'Γ = {gamma_eV:.3f} eV', transform=ax.transAxes, fontsize=20)
             ax.text(0.55, 0.66, f'S/N = {snr:.0f}', transform=ax.transAxes, fontsize=20)
-
     
     # Set fixed axis ranges for consistency across plots
     xmin, xmax = args['CROP_RANGE_NM']
     if output_unit == 'nm':
-
         ax.set_xlim(xmin, xmax)
-
     elif output_unit == 'eV':
-
         ax.set_xlim(1239.842 / xmax, 1239.842 / xmin)
-
     
     # Set Y-axis range with error protection
-    y_max = max(y.max(), y_fit.max()) if len(y) > 0 else 1.0
+    y_max = max(y.max(), y_fit.max() if show_fit else 0) if len(y) > 0 else 1.0
     if y_max <= 0:
         y_max = 1.0
     ax.set_ylim(0, y_max * 1.05)  # 5% padding above maximum
@@ -286,7 +278,7 @@ def save_dfs_particle_map(max_map: np.ndarray,
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label('Max Intensity', fontsize=12)
     
-    output_unit - args.get('OUTPUT_UNIT')
+    output_unit = args.get('OUTPUT_UNIT')
 
     # Add particle markers and annotations
     for i, rep in enumerate(representatives):
@@ -310,19 +302,19 @@ def save_dfs_particle_map(max_map: np.ndarray,
                 bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
         
         if output_unit == 'eV':
-            energy = 1239.842 / rep['peak_wl']
             
+            energy = 1239.842 / rep['peak_wl']
             ax.text(col - 3, row - 3,
-                    f'{energy:.3f}nm',
+                    f'{energy:.3f} eV',
                     color='yellow',
                     fontsize=6,
                     fontweight='bold',
                     ha='left')
 
         else:
-        # Wavelength annotation in contrasting color
+
             ax.text(col - 3, row - 3,
-                    f'{rep["peak_wl"]:.0f}nm',
+                    f'{rep["peak_wl"]:.0f} nm',
                     color='yellow',
                     fontsize=6,
                     fontweight='bold',
