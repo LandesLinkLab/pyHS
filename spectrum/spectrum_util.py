@@ -300,18 +300,25 @@ def plot_spectrum(x: np.ndarray,
 
     output_unit = args.get('OUTPUT_UNIT', 'nm')
 
+    # ✓ 수정: wavelength를 energy로 올바르게 변환
     if output_unit == 'eV':
-        x = 1239.842 / x
-        x = x[::-1]
-        y = y[::-1]
-        y_fit = y_fit[::-1]
+        # x는 wavelength (nm)이므로 energy (eV)로 변환
+        x_plot = 1239.842 / x
+        # energy는 증가 순서로 정렬 (wavelength의 역순)
+        x_plot = x_plot[::-1]
+        y_plot = y[::-1]
+        y_fit_plot = y_fit[::-1]
+    else:
+        x_plot = x
+        y_plot = y
+        y_fit_plot = y_fit
 
     # Plot data
-    ax.plot(x, y, 'b-', linewidth=3, label='Data')
+    ax.plot(x_plot, y_plot, 'b-', linewidth=3, label='Data')
     
     # Plot fit if requested
     if show_fit:
-        ax.plot(x, y_fit, 'k--', linewidth=3, label='Lorentz fit')
+        ax.plot(x_plot, y_fit_plot, 'k--', linewidth=3, label='Lorentz fit')
     
     # Axis labels
     if output_unit == 'eV':
@@ -354,6 +361,7 @@ def plot_spectrum(x: np.ndarray,
                            transform=ax.transAxes, fontsize=18)
                 
                 elif output_unit == 'eV':
+                    # ✓ 수정: nm → eV 변환 수식 올바르게 적용
                     lambda_max_ev = 1239.842 / lambda_max_nm
                     gamma_eV = abs(1239.842 / (lambda_max_nm - gamma_nm/2) - 
                                   1239.842 / (lambda_max_nm + gamma_nm/2))
@@ -373,10 +381,11 @@ def plot_spectrum(x: np.ndarray,
     if output_unit == 'nm':
         ax.set_xlim(xmin, xmax)
     elif output_unit == 'eV':
+        # ✓ 수정: xlim도 energy 순서로 (작은 값 → 큰 값)
         ax.set_xlim(1239.842 / xmax, 1239.842 / xmin)
     
     # Y-axis range
-    y_max = max(y.max(), y_fit.max() if show_fit else 0) if len(y) > 0 else 1.0
+    y_max = max(y_plot.max(), y_fit_plot.max() if show_fit else 0) if len(y_plot) > 0 else 1.0
     if y_max <= 0:
         y_max = 1.0
     ax.set_ylim(0, y_max * 1.05)

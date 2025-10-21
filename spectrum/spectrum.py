@@ -383,7 +383,9 @@ class SpectrumAnalyzer:
             particle_num = i + 1
            
             if output_unit == 'eV':
+                # ✓ 수정: wavelength를 energy로 올바르게 변환
                 energy = 1239.842 / self.dataset.wvl
+                # energy 증가 순서로 정렬
                 energy = energy[::-1]
                 spectrum = rep['spectrum'][::-1]
                 fit = rep['fit'][::-1]
@@ -399,9 +401,10 @@ class SpectrumAnalyzer:
                     fwhm_nm = rep['params'].get(f'c{peak_idx}', 0)
                     
                     if peak_nm > 0:
+                        # ✓ 수정: nm → eV 변환 올바르게 적용
                         peak_ev = 1239.842 / peak_nm
                         fwhm_ev = abs(1239.842/(peak_nm - fwhm_nm/2) - 1239.842/(peak_nm + fwhm_nm/2))
-                        header += f"# Peak {peak_idx}: {peak_ev:.3f} eV ({peak_nm:.1f} nm), FWHM: {fwhm_ev:.3f} eV\n"
+                        header += f"# Peak {peak_idx}: {peak_ev:.3f} eV ({peak_nm:.1f} nm), FWHM: {fwhm_ev:.3f} eV ({fwhm_nm:.1f} nm)\n"
                 
                 header += f"# S/N: {rep['snr']:.1f}, R²: {rep['r2']:.3f}"
             
@@ -425,8 +428,11 @@ class SpectrumAnalyzer:
                 data,
                 delimiter='\t',
                 header=header,
-                fmt='%.3f'
+                comments='',  # ✓ 추가: # 문자가 자동으로 추가되지 않도록
+                fmt='%.6f'    # ✓ 수정: 더 높은 정밀도
             )
+        
+        print(f"[info] Saved {len(self.representatives)} spectral files to {out_dir}")
     
     def print_summary(self):
         """Print comprehensive analysis summary with statistics"""

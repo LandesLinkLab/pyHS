@@ -57,6 +57,10 @@ args['PEAK_INITIAL_GUESS'] = 'auto'  # Initial guess for peak positions
                                       # Example for 2 peaks: [650, 800]
                                       # Example for 3 peaks: [600, 700, 850]
 
+args['FIT_RANGE_NM'] = (500, 1000)    # Wavelength range (nm) for Lorentzian curve fitting
+                                      # Should encompass the full resonance peak for accurate parameter extraction
+                                      # Usually same as CROP_RANGE_NM
+
 # ============================================================================
 # ELECTROCHEMICAL REFERENCE PARAMETERS
 # ============================================================================

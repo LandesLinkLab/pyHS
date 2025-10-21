@@ -50,12 +50,16 @@ args['NUM_PEAKS'] = 3  # Number of Lorentzian peaks to fit per spectrum
                        # 2: Two peaks (dimers, coupled nanoparticles)
                        # 3+: Multiple peaks (complex coupled systems)
 
-args['PEAK_INITIAL_GUESS'] = 'auto'  # Initial guess for peak positions
+args['PEAK_INITIAL_GUESS'] = [580, 700, 760]  # Initial guess for peak positions
                                       # 'auto': Automatic peak detection using scipy.signal.find_peaks
                                       # [650, 800]: Manual specification (wavelength in nm)
                                       # Must provide NUM_PEAKS values if manual
                                       # Example for 2 peaks: [650, 800]
                                       # Example for 3 peaks: [600, 700, 850]
+
+args['FIT_RANGE_NM'] = (500, 1000)    # Wavelength range (nm) for Lorentzian curve fitting
+                                      # Should encompass the full resonance peak for accurate parameter extraction
+                                      # Usually same as CROP_RANGE_NM                                      
 
 # ============================================================================
 # ELECTROCHEMICAL REFERENCE PARAMETERS
@@ -113,7 +117,7 @@ args['FIG_DPI'] = 300  # Resolution (dots per inch) for saved figures
 # Display parameters for detailed cycle plots (reserved for future implementation)
 args['ECHEM_CYCLE_PLOT_START'] = 1    # First cycle to display in detail plots
 args['ECHEM_CYCLE_PLOT_END'] = 4      # Last cycle to display in detail plots
-args['OUTPUT_UNIT'] = 'eV'            # Unit for spectral output: 'nm' (wavelength) or 'eV' (energy)
+args['OUTPUT_UNIT'] = 'nm'            # Unit for spectral output: 'nm' (wavelength) or 'eV' (energy)
                                       # 'nm': Traditional wavelength units (λ in nanometers)
                                       # 'eV': Energy units (E = hc/λ = 1239.842/λ_nm)
 
