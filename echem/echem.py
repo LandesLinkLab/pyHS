@@ -68,196 +68,7 @@ class EChemAnalyzer:
         self.save_spectra_data()
         self.dump_results()
         self.print_summary()
-    
-    # def fit_lorentz_energy(self, energy: np.ndarray, spectrum: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
-    #     """
-    #     Fit N Lorentzian peaks in energy space (eV)
-        
-    #     This wrapper converts wavelength-based initial guess to energy space
-    #     and calls the generic N-peak fitting function.
-        
-    #     Parameters:
-    #     -----------
-    #     energy : np.ndarray
-    #         Energy array (eV) - MUST be monotonically increasing
-    #     spectrum : np.ndarray
-    #         Intensity array
-        
-    #     Returns:
-    #     --------
-    #     Tuple[np.ndarray, Dict[str, float], float]
-    #         - Fitted curve in energy space
-    #         - Parameters dict: 'a1', 'b1' (eV), 'c1' (eV), 'a2', 'b2', 'c2', ...
-    #         - R-squared value
-    #     """
-        
-        
-    #     num_peaks = self.args.get('NUM_PEAKS', 1)
-    #     peak_guess = self.args.get('PEAK_INITIAL_GUESS', 'auto')
-        
-    #     # Convert manual wavelength guess to energy
-    #     manual_positions_ev = None
-    #     if peak_guess != 'auto' and isinstance(peak_guess, (list, tuple)):
-    #         # Convert nm to eV
-    #         manual_positions_ev = [1239.842 / wl_nm for wl_nm in peak_guess]
-    #         # Sort in ascending energy order (descending wavelength)
-    #         manual_positions_ev = sorted(manual_positions_ev)
-    #         print(f"[debug] Converted manual guess: {peak_guess} nm → {manual_positions_ev} eV")
-        
-    #     # Define N-peak Lorentzian in energy space
-    #     def lorentz_n_energy(E, *params):
-    #         """N Lorentzian peaks in energy space"""
-    #         result = np.zeros_like(E, dtype=float)
-    #         n = len(params) // 3
-            
-    #         for i in range(n):
-    #             a = params[3*i]
-    #             E0 = params[3*i + 1]
-    #             gamma = params[3*i + 2]
-    #             result += (2*a/np.pi) * (gamma / (4*(E-E0)**2 + gamma**2))
-            
-    #         return result
-        
-    #     # Validate input
-    #     if len(spectrum) == 0 or np.all(spectrum <= 0) or np.isnan(spectrum).any():
-    #         print("[warning] Invalid spectrum for energy fitting")
 
-    #         for i in range(num_peaks):
-
-    #             peak_num = i + 1
-    #             params[f'a{peak_num}'] = 0
-    #             params[f'b{peak_num}'] = 0
-    #             params[f'c{peak_num}'] = 0
-
-    #         return np.zeros_like(spectrum), params, 0.0
-        
-    #     # Check variation
-    #     if spectrum.max() - spectrum.min() < 0.01:
-    #         print(f"[warning] Spectrum has insufficient variation")
-
-    #         for i in range(num_peaks):
-
-    #             peak_num = i + 1
-    #             params[f'a{peak_num}'] = 0
-    #             params[f'b{peak_num}'] = 0
-    #             params[f'c{peak_num}'] = 0
-
-    #         return np.zeros_like(spectrum), params, 0.0
-        
-    #     # Generate initial guess
-    #     if manual_positions_ev is not None:
-    #         # Manual mode
-    #         p0 = []
-    #         for E_pos in manual_positions_ev:
-    #             idx = np.argmin(np.abs(energy - E_pos))
-    #             a0 = spectrum[idx] * np.pi / 2
-    #             E0 = energy[idx]
-    #             gamma0 = 0.1  # Default FWHM in eV
-    #             p0.extend([a0, E0, gamma0])
-    #             print(f"  Peak at {E_pos:.3f} eV → idx={idx}, E={E0:.3f} eV, amp={a0:.2f}")
-        
-    #     else:
-    #         # Auto mode
-    #         peaks_idx, properties = find_peaks(
-    #             spectrum,
-    #             distance=10,
-    #             prominence=spectrum.max() * 0.05
-    #         )
-            
-    #         print(f"[debug] Auto-detected {len(peaks_idx)} candidate peaks in energy space")
-            
-    #         if len(peaks_idx) < num_peaks:
-    #             print(f"[warning] Only found {len(peaks_idx)} peaks, needed {num_peaks}")
-    #             selected_peaks = list(peaks_idx)
-                
-    #             # Fill missing peaks
-    #             missing = num_peaks - len(peaks_idx)
-    #             if missing > 0:
-    #                 spacing = len(energy) // (missing + 1)
-    #                 for i in range(1, missing + 1):
-    #                     extra_idx = i * spacing
-    #                     if extra_idx < len(energy):
-    #                         selected_peaks.append(extra_idx)
-                
-    #             selected_peaks = np.array(selected_peaks[:num_peaks])
-            
-    #         elif len(peaks_idx) > num_peaks:
-    #             peak_heights = spectrum[peaks_idx]
-    #             sorted_indices = np.argsort(peak_heights)[-num_peaks:]
-    #             selected_peaks = peaks_idx[sorted_indices]
-            
-    #         else:
-    #             selected_peaks = peaks_idx
-            
-    #         # Sort by energy (ascending)
-    #         selected_peaks = np.sort(selected_peaks)
-            
-    #         # Generate p0
-    #         p0 = []
-    #         for idx in selected_peaks:
-    #             a0 = spectrum[idx] * np.pi / 2
-    #             E0 = energy[idx]
-    #             gamma0 = 0.1  # 0.1 eV default
-    #             p0.extend([a0, E0, gamma0])
-    #             print(f"  Peak at idx={idx}, E={E0:.3f} eV, amp={a0:.2f}")
-        
-    #     # Set bounds
-    #     lower_bounds = [0, energy.min(), 0.001] * num_peaks
-    #     upper_bounds = [np.inf, energy.max(), 2.0] * num_peaks
-        
-    #     try:
-    #         from scipy.optimize import curve_fit
-            
-    #         popt, pcov = curve_fit(
-    #             lorentz_n_energy,
-    #             energy,
-    #             spectrum,
-    #             p0=p0,
-    #             bounds=(lower_bounds, upper_bounds),
-    #             maxfev=10000,
-    #             method='trf'
-    #         )
-            
-    #         # Generate fit
-    #         y_fit = lorentz_n_energy(energy, *popt)
-            
-    #         # Calculate R²
-    #         ss_res = np.sum((spectrum - y_fit)**2)
-    #         ss_tot = np.sum((spectrum - spectrum.mean())**2)
-            
-    #         if ss_tot < 1e-10:
-    #             r2 = 0.0
-    #         else:
-    #             r2 = 1 - (ss_res / ss_tot)
-            
-    #         # Package parameters
-    #         params = {}
-    #         for i in range(num_peaks):
-    #             peak_num = i + 1
-    #             params[f'a{peak_num}'] = popt[3*i]
-    #             params[f'b{peak_num}'] = popt[3*i + 1]  # Energy in eV
-    #             params[f'c{peak_num}'] = popt[3*i + 2]  # FWHM in eV
-            
-    #         print(f"[debug] Energy fitting successful: R²={r2:.4f}")
-    #         for i in range(num_peaks):
-    #             peak_num = i + 1
-    #             print(f"  Peak {peak_num}: E={params[f'b{peak_num}']:.3f} eV, "
-    #                   f"FWHM={params[f'c{peak_num}']:.3f} eV")
-            
-    #         return y_fit, params, float(r2)
-        
-    #     except Exception as e:
-    #         print(f"[warning] {num_peaks}-peak energy fitting failed: {str(e)}")
-
-    #         for i in range(num_peaks):
-
-    #             peak_num = i + 1
-    #             params[f'a{peak_num}'] = 0
-    #             params[f'b{peak_num}'] = 0
-    #             params[f'c{peak_num}'] = 0
-
-    #         return np.zeros_like(spectrum), params, 0.0
-    
     def fit_all_spectra(self):
         """
         Fit Lorentzian function to all time-point spectra
@@ -862,7 +673,26 @@ class EChemAnalyzer:
         else:
             print(f"Initial guess: auto-detect")
         
-        print(f"Total spectra: {self.dataset.spectra.shape[0]}")
+        # Print fitting constraint settings
+        peak_tol = self.args.get('PEAK_POSITION_TOLERANCE', None)
+        if peak_tol is not None:
+            if isinstance(peak_tol, (list, tuple)):
+                print(f"Peak position tolerance: {peak_tol} nm (per peak)")
+            else:
+                print(f"Peak position tolerance: ±{peak_tol} nm")
+        else:
+            print(f"Peak position tolerance: None (unconstrained)")
+        
+        # Print retry fitting settings
+        max_attempts = self.args.get('FIT_MAX_ATTEMPTS', 1)
+        if max_attempts > 1:
+            retry_strategy = self.args.get('FIT_RETRY_STRATEGY', 'broaden_bounds')
+            retry_factor = self.args.get('FIT_RETRY_FACTOR', 1.5)
+            print(f"Fitting attempts: {max_attempts} (strategy: {retry_strategy}, factor: {retry_factor}x)")
+        else:
+            print(f"Fitting attempts: 1 (no retry)")
+        
+        print(f"\nTotal spectra: {self.dataset.spectra.shape[0]}")
         print(f"Successfully fitted: {len(self.fitted_params)}")
         print(f"Rejected fits: {len(self.rejected_fits)}")
         

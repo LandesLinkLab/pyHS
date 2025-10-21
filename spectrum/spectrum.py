@@ -448,7 +448,26 @@ class SpectrumAnalyzer:
         else:
             print(f"Initial guess: auto-detect")
         
-        print(f"Total clusters detected: {len(self.dataset.clusters) if self.dataset.clusters else 0}")
+        # Print fitting constraint settings
+        peak_tol = self.args.get('PEAK_POSITION_TOLERANCE', None)
+        if peak_tol is not None:
+            if isinstance(peak_tol, (list, tuple)):
+                print(f"Peak position tolerance: {peak_tol} nm (per peak)")
+            else:
+                print(f"Peak position tolerance: ±{peak_tol} nm")
+        else:
+            print(f"Peak position tolerance: None (unconstrained)")
+        
+        # Print retry fitting settings
+        max_attempts = self.args.get('FIT_MAX_ATTEMPTS', 1)
+        if max_attempts > 1:
+            retry_strategy = self.args.get('FIT_RETRY_STRATEGY', 'broaden_bounds')
+            retry_factor = self.args.get('FIT_RETRY_FACTOR', 1.5)
+            print(f"Fitting attempts: {max_attempts} (strategy: {retry_strategy}, factor: {retry_factor}x)")
+        else:
+            print(f"Fitting attempts: 1 (no retry)")
+        
+        print(f"\nTotal clusters detected: {len(self.dataset.clusters) if self.dataset.clusters else 0}")
         print(f"Clusters analyzed: {len(self.cluster_fits)}")
         print(f"Valid representatives: {len(self.representatives)}")
         print(f"Rejected spectra: {len(self.rejected_spectra)}")

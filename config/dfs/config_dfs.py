@@ -97,6 +97,55 @@ args['PEAK_INITIAL_GUESS'] = 'auto'  # Initial guess for peak positions
                                       # Example for 2 peaks: [650, 800]
                                       # Example for 3 peaks: [600, 700, 850]
 
+# NEW: Peak Position Constraints
+args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions during fitting
+                                                 # None: No constraint (peaks can move freely within FIT_RANGE_NM)
+                                                 # Single value (e.g., 50): All peaks constrained to ±50 nm from initial guess
+                                                 # List (e.g., [20, 30, 40]): Different constraint per peak (must match NUM_PEAKS)
+                                                 # 
+                                                 # Example: PEAK_INITIAL_GUESS = [600, 700, 800], TOLERANCE = 30
+                                                 #   → Peak 1 can only fit between 570-630 nm
+                                                 #   → Peak 2 can only fit between 670-730 nm
+                                                 #   → Peak 3 can only fit between 770-830 nm
+                                                 #
+                                                 # When to use:
+                                                 # - Prevent peaks from shifting to wrong positions
+                                                 # - Known approximate peak locations from theory/previous experiments
+                                                 # - Avoid peak swapping in multi-peak fits
+
+# NEW: Multi-Attempt Fitting with Intelligent Retry
+args['FIT_MAX_ITERATIONS'] = 3  # Number of fitting iterations
+                                # Each iteration tries ALL strategies and keeps the best:
+                                #   1. Current best parameters (from previous iteration)
+                                #   2. Shift peaks left (-10 nm)
+                                #   3. Shift peaks right (+10 nm)
+                                #   4. Narrow FWHM (60% of current)
+                                #   5. Widen FWHM (150% of current)
+                                #   6. Random exploration
+                                #
+                                # The best result from each iteration becomes the starting
+                                # point for the next iteration, progressively improving R².
+                                #
+                                # Recommended values:
+                                #   1: Single iteration (6 strategy attempts)
+                                #   3: Multiple refinements (18 total attempts)
+                                #   5: Thorough optimization (30 total attempts)
+                                #
+                                # Returns: Best parameters from final iteration
+
+args['FIT_RETRY_STRATEGY'] = 'broaden_bounds'  # Retry strategy (DEPRECATED - now auto-selected by attempt number)
+                                                # This parameter is no longer actively used
+                                                # The algorithm automatically selects strategies in optimal order
+                                                # Keep for backward compatibility
+
+args['FIT_RETRY_FACTOR'] = 1.5  # Multiplicative factor for strategy adjustments
+                                # Used by 'broaden_bounds' strategy to expand parameter ranges
+                                # Example: 1.5 → bounds expanded by 50% on each retry
+                                # Recommended range: 1.2 - 2.0
+                                #   1.2: Conservative (small adjustments)
+                                #   1.5: Balanced (default)
+                                #   2.0: Aggressive (large adjustments)
+
 # ============================================================================
 # OUTPUT AND VISUALIZATION SETTINGS
 # ============================================================================
