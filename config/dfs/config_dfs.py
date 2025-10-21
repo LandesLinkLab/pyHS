@@ -85,6 +85,18 @@ args['RSQ_MIN'] = 0.90         # Minimum R-squared value for accepting Lorentzia
 args['FIT_RANGE_NM'] = (500, 850)  # Wavelength range (nm) for Lorentzian curve fitting
                                     # Should encompass the full resonance peak for accurate parameter extraction
 
+args['NUM_PEAKS'] = 1  # Number of Lorentzian peaks to fit per spectrum
+                       # 1: Single peak (monomers, simple nanoparticles)
+                       # 2: Two peaks (dimers, coupled nanoparticles)
+                       # 3+: Multiple peaks (complex coupled systems)
+
+args['PEAK_INITIAL_GUESS'] = 'auto'  # Initial guess for peak positions
+                                      # 'auto': Automatic peak detection using scipy.signal.find_peaks
+                                      # [650, 800]: Manual specification (wavelength in nm)
+                                      # Must provide NUM_PEAKS values if manual
+                                      # Example for 2 peaks: [650, 800]
+                                      # Example for 3 peaks: [600, 700, 850]
+
 # ============================================================================
 # OUTPUT AND VISUALIZATION SETTINGS
 # ============================================================================

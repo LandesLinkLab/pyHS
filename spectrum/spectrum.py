@@ -199,10 +199,17 @@ class SpectrumAnalyzer:
                 'peak_wl': params.get('b1', self.dataset.wvl[resonance_idx]),
                 'fwhm': params.get('c1', 0),
                 'peak_intensity': integrated_spectrum[resonance_idx],
-                'raw_peak_intensity': signal,  # Store raw signal value
+                'raw_peak_intensity': signal,
                 'integrated_pixels': pixel_count
             }
-            
+
+            num_peaks = self.args.get('NUM_PEAKS')
+            if num_peaks > 1:
+
+                for i in range(2,num_peaks+1):
+                    result[f'peak_wl{i}'] = params.get(f'b{i}')
+                    result[f'fwhm{i}'] = params.get(f'c{i}')
+
             cluster_results.append(result)
             
             # Store cluster fitting results
@@ -363,29 +370,19 @@ class SpectrumAnalyzer:
         )
     
     def save_spectra(self):
-        """
-        Export spectral data to tab-separated text files
-        
-        This method:
-        - Creates a 'spectra' subdirectory in the output folder
-        - Saves each representative spectrum as a separate text file
-        - Includes wavelength, intensity, and fit data in columns
-        - Adds metadata headers with particle information and fitting parameters
-        - Uses consistent naming convention for easy identification
-        """
+        """Export spectral data to tab-separated text files"""
         print("\n[Step] Saving spectra data...")
         
         out_dir = Path(self.args['OUTPUT_DIR']) / "spectra"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        output_unit = self.args.get('OUTPUT_UNIT')
+        output_unit = self.args.get('OUTPUT_UNIT', 'nm')
+        num_peaks = self.args.get('NUM_PEAKS', 1)
         
         for i, rep in enumerate(self.representatives):
-            # Generate sequential particle numbers
             particle_num = i + 1
            
             if output_unit == 'eV':
-
                 energy = 1239.842 / self.dataset.wvl
                 energy = energy[::-1]
                 spectrum = rep['spectrum'][::-1]
@@ -393,106 +390,127 @@ class SpectrumAnalyzer:
 
                 data = np.column_stack((energy, spectrum, fit))
 
-                peak_ev = 1239.842 / rep['peak_wl']
-                peak_nm = rep['peak_wl']
-                fwhm_nm = rep['fwhm']
-                fwhm_ev = 1239.842/(peak_nm - fwhm_nm/2) - 1239.842/(peak_nm + fwhm_nm/2)
-            
+                # Header with all peaks
                 header = f"Energy(eV)\tIntensity\tFit\n"
                 header += f"# Particle {particle_num}, Cluster {rep['cluster_label']}, Position ({rep['row']},{rep['col']})\n"
-                header += f"# Peak: {peak_ev:.3f} eV ({rep['peak_wl']:.1f} nm), FWHM: {fwhm_ev:.3f} eV, S/N: {rep['snr']:.1f}"
+                
+                for peak_idx in range(1, num_peaks + 1):
+                    peak_nm = rep['params'].get(f'b{peak_idx}', 0)
+                    fwhm_nm = rep['params'].get(f'c{peak_idx}', 0)
+                    
+                    if peak_nm > 0:
+                        peak_ev = 1239.842 / peak_nm
+                        fwhm_ev = abs(1239.842/(peak_nm - fwhm_nm/2) - 1239.842/(peak_nm + fwhm_nm/2))
+                        header += f"# Peak {peak_idx}: {peak_ev:.3f} eV ({peak_nm:.1f} nm), FWHM: {fwhm_ev:.3f} eV\n"
+                
+                header += f"# S/N: {rep['snr']:.1f}, R²: {rep['r2']:.3f}"
             
             else:
-
-                # Prepare data array: wavelength, intensity, fit
                 data = np.column_stack((self.dataset.wvl, rep['spectrum'], rep['fit']))
                 
-                # Create informative header with metadata
                 header = f"Wavelength(nm)\tIntensity\tFit\n"
                 header += f"# Particle {particle_num}, Cluster {rep['cluster_label']}, Position ({rep['row']},{rep['col']})\n"
-                header += f"# Peak: {rep['peak_wl']:.1f} nm, FWHM: {rep['fwhm']:.1f} nm, S/N: {rep['snr']:.1f}"
+                
+                for peak_idx in range(1, num_peaks + 1):
+                    peak_nm = rep['params'].get(f'b{peak_idx}', 0)
+                    fwhm_nm = rep['params'].get(f'c{peak_idx}', 0)
+                    
+                    if peak_nm > 0:
+                        header += f"# Peak {peak_idx}: {peak_nm:.1f} nm, FWHM: {fwhm_nm:.1f} nm\n"
+                
+                header += f"# S/N: {rep['snr']:.1f}, R²: {rep['r2']:.3f}"
             
-            # Save to text file with tab separation
             np.savetxt(
                 out_dir / f"{self.dataset.sample_name}_particle_{particle_num:03d}.txt",
                 data,
                 delimiter='\t',
                 header=header,
-                fmt='%.3f'  # 3 decimal places
+                fmt='%.3f'
             )
     
     def print_summary(self):
-        """
-        Print comprehensive analysis summary with statistics
-        
-        This method provides a detailed summary including:
-        - Basic counts of detected, analyzed, and valid particles
-        - Statistical analysis of key parameters (wavelength, FWHM, SNR, R²)
-        - Quality metrics and filtering results
-        - Information about rejected spectra and reasons
-        - Cluster size distribution
-        
-        The summary is formatted for easy reading and interpretation.
-        """
+        """Print comprehensive analysis summary with statistics"""
         print("\n" + "="*60)
         print("DFS ANALYSIS SUMMARY")
         print("="*60)
         print(f"Sample: {self.dataset.sample_name}")
+        print(f"Fitting mode: {self.args.get('NUM_PEAKS', 1)} peak(s)")
+        
+        peak_guess = self.args.get('PEAK_INITIAL_GUESS', 'auto')
+        if peak_guess != 'auto':
+            print(f"Initial guess: {peak_guess} nm")
+        else:
+            print(f"Initial guess: auto-detect")
+        
         print(f"Total clusters detected: {len(self.dataset.clusters) if self.dataset.clusters else 0}")
         print(f"Clusters analyzed: {len(self.cluster_fits)}")
         print(f"Valid representatives: {len(self.representatives)}")
         print(f"Rejected spectra: {len(self.rejected_spectra)}")
         
         if self.representatives:
-
             output_unit = self.args.get('OUTPUT_UNIT', 'eV')
+            num_peaks = self.args.get('NUM_PEAKS', 1)
 
-            if output_unit == 'eV':
-
-                peak_energies = [1239.842/r['peak_wl'] for r in self.representatives]
-
-                fwhm_evs = []
-                for r in self.representatives:
-                    peak_nm = r['peak_wl']
-                    fwhm_nm = r['fwhm']
-                    if fwhm_nm > 0:
-                        fwhm_ev = 1239.842/(peak_nm - fwhm_nm/2) - 1239.842/(peak_nm + fwhm_nm/2)
-                        fwhm_evs.append(abs(fwhm_ev))
+            # Statistics for each peak
+            for peak_idx in range(1, num_peaks + 1):
+                print(f"\n--- Peak {peak_idx} Statistics ---")
                 
-                print(f"\nResonance energy: {np.mean(peak_energies):.3f} ± {np.std(peak_energies):.3f} eV")
-                print(f"  Range: {min(peak_energies):.3f} - {max(peak_energies):.3f} eV")
-                
-                if fwhm_evs:
-                    print(f"\nFWHM: {np.mean(fwhm_evs):.3f} ± {np.std(fwhm_evs):.3f} eV")
-                    print(f"  Range: {min(fwhm_evs):.3f} - {max(fwhm_evs):.3f} eV")
+                if output_unit == 'eV':
+                    peak_energies = []
+                    fwhm_evs = []
+                    
+                    for r in self.representatives:
+                        peak_nm = r['params'].get(f'b{peak_idx}', 0)
+                        fwhm_nm = r['params'].get(f'c{peak_idx}', 0)
+                        
+                        if peak_nm > 0:
+                            peak_energies.append(1239.842 / peak_nm)
+                            if fwhm_nm > 0:
+                                fwhm_ev = abs(1239.842/(peak_nm - fwhm_nm/2) - 
+                                            1239.842/(peak_nm + fwhm_nm/2))
+                                fwhm_evs.append(fwhm_ev)
+                    
+                    if peak_energies:
+                        print(f"Resonance energy: {np.mean(peak_energies):.3f} ± {np.std(peak_energies):.3f} eV")
+                        print(f"  Range: {min(peak_energies):.3f} - {max(peak_energies):.3f} eV")
+                    
+                    if fwhm_evs:
+                        print(f"FWHM: {np.mean(fwhm_evs):.3f} ± {np.std(fwhm_evs):.3f} eV")
+                        print(f"  Range: {min(fwhm_evs):.3f} - {max(fwhm_evs):.3f} eV")
 
-            else:
-
-                # Extract parameters for statistical analysis
-                wavelengths = [r['peak_wl'] for r in self.representatives]
-                fwhms = [r['fwhm'] for r in self.representatives if r['fwhm'] > 0]
-                snrs = [r['snr'] for r in self.representatives]
-                cluster_sizes = [r['cluster_size'] for r in self.representatives]
-                r2s = [r['r2'] for r in self.representatives]
-                
-                # Resonance wavelength statistics
-                print(f"\nResonance wavelength: {np.mean(wavelengths):.1f} ± {np.std(wavelengths):.1f} nm")
-                print(f"  Range: {min(wavelengths):.1f} - {max(wavelengths):.1f} nm")
-                
-                # FWHM statistics
-                if fwhms:
-                    print(f"\nFWHM: {np.mean(fwhms):.1f} ± {np.std(fwhms):.1f} nm")
-                    print(f"  Range: {min(fwhms):.1f} - {max(fwhms):.1f} nm")
+                else:
+                    wavelengths = []
+                    fwhms = []
+                    
+                    for r in self.representatives:
+                        peak_nm = r['params'].get(f'b{peak_idx}', 0)
+                        fwhm_nm = r['params'].get(f'c{peak_idx}', 0)
+                        
+                        if peak_nm > 0:
+                            wavelengths.append(peak_nm)
+                        if fwhm_nm > 0:
+                            fwhms.append(fwhm_nm)
+                    
+                    if wavelengths:
+                        print(f"Resonance wavelength: {np.mean(wavelengths):.1f} ± {np.std(wavelengths):.1f} nm")
+                        print(f"  Range: {min(wavelengths):.1f} - {max(wavelengths):.1f} nm")
+                    
+                    if fwhms:
+                        print(f"FWHM: {np.mean(fwhms):.1f} ± {np.std(fwhms):.1f} nm")
+                        print(f"  Range: {min(fwhms):.1f} - {max(fwhms):.1f} nm")
             
-            # Signal-to-noise ratio statistics
-            print(f"\nS/N ratio: {np.mean(snrs):.1f} ± {np.std(snrs):.1f}")
+            # Overall statistics (peak-independent)
+            snrs = [r['snr'] for r in self.representatives]
+            r2s = [r['r2'] for r in self.representatives]
+            cluster_sizes = [r['cluster_size'] for r in self.representatives]
+            
+            print(f"\n--- Overall Statistics ---")
+            print(f"S/N ratio: {np.mean(snrs):.1f} ± {np.std(snrs):.1f}")
             print(f"  Range: {min(snrs):.1f} - {max(snrs):.1f}")
             
-            # R-squared statistics (fitting quality)
             print(f"\nR² values: {np.mean(r2s):.3f} ± {np.std(r2s):.3f}")
             print(f"  Range: {min(r2s):.3f} - {max(r2s):.3f}")
             
-            # Cluster size statistics
             print(f"\nCluster sizes: {np.mean(cluster_sizes):.1f} ± {np.std(cluster_sizes):.1f} pixels")
             print(f"  Range: {min(cluster_sizes)} - {max(cluster_sizes)} pixels")
         

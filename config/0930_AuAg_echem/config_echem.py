@@ -24,7 +24,7 @@ args['ECHEM_CHI_FILE'] = 'chi_cv'     # CHI potentiostat data file name (without
 args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/093025_AuAg_echem')  # Directory containing TDMS and CHI files
 args['WHITE_FILE'] = "wc.tdms"     # White reference file name for flatfield correction
 args['DARK_FILE'] = "dc.tdms"      # Dark reference file name for flatfield correction
-args['OUTPUT_DIR'] = os.path.join(home, "research", "093020_AuAg_echem")  # Output directory for EChem results
+args['OUTPUT_DIR'] = os.path.join(home, "research/pyHS", "093025_AuAg_echem")  # Output directory for EChem results
                                                                             # EChem saves to: OUTPUT_DIR/echem/
 
 # ============================================================================
@@ -42,9 +42,20 @@ args['ECHEM_TECHNIQUE'] = 'CV'        # Electrochemical technique: 'CV', 'CA', o
                                       # CA: Chronoamperometry (potential steps)
                                       # CC: Chronocoulometry (potential steps with charge integration)
 
-args['ECHEM_SCATT_TYPE'] = 'single'   # Particle type: 'single' (1 Lorentzian peak) or 'dimer' (2 peaks)
-                                      # Single: monomer nanoparticles with one plasmon mode
-                                      # Dimer: coupled particles with longitudinal/transverse modes
+# ============================================================================
+# SPECTRAL FITTING PARAMETERS
+# ============================================================================
+args['NUM_PEAKS'] = 3  # Number of Lorentzian peaks to fit per spectrum
+                       # 1: Single peak (monomers, simple nanoparticles)
+                       # 2: Two peaks (dimers, coupled nanoparticles)
+                       # 3+: Multiple peaks (complex coupled systems)
+
+args['PEAK_INITIAL_GUESS'] = 'auto'  # Initial guess for peak positions
+                                      # 'auto': Automatic peak detection using scipy.signal.find_peaks
+                                      # [650, 800]: Manual specification (wavelength in nm)
+                                      # Must provide NUM_PEAKS values if manual
+                                      # Example for 2 peaks: [650, 800]
+                                      # Example for 3 peaks: [600, 700, 850]
 
 # ============================================================================
 # ELECTROCHEMICAL REFERENCE PARAMETERS
@@ -73,11 +84,11 @@ args['ECHEM_CYCLE_BACKCUT'] = 0       # Number of cycles to exclude from the end
 # ============================================================================
 # SPECTRAL PROCESSING PARAMETERS
 # ============================================================================
-args['ECHEM_LOWERCUT'] = 140          # Pixels to trim from blue (short wavelength) end of spectrum
+args['ECHEM_LOWERCUT'] = 0          # Pixels to trim from blue (short wavelength) end of spectrum
                                       # Removes unreliable edge pixels affected by detector artifacts
                                       # Processing order: LOWERCUT/UPPERCUT (pixels) → CROP_RANGE_NM (wavelength)
 
-args['ECHEM_UPPERCUT'] = 260          # Pixels to trim from red (long wavelength) end of spectrum
+args['ECHEM_UPPERCUT'] = 0          # Pixels to trim from red (long wavelength) end of spectrum
                                       # These values match MATLAB cv_analysis script parameters
                                       # Typical values: 140/260 but may need adjustment per instrument
 

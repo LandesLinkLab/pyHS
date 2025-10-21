@@ -42,9 +42,20 @@ args['ECHEM_TECHNIQUE'] = 'CV'        # Electrochemical technique: 'CV', 'CA', o
                                       # CA: Chronoamperometry (potential steps)
                                       # CC: Chronocoulometry (potential steps with charge integration)
 
-args['ECHEM_SCATT_TYPE'] = 'single'   # Particle type: 'single' (1 Lorentzian peak) or 'dimer' (2 peaks)
-                                      # Single: monomer nanoparticles with one plasmon mode
-                                      # Dimer: coupled particles with longitudinal/transverse modes
+# ============================================================================
+# SPECTRAL FITTING PARAMETERS
+# ============================================================================
+args['NUM_PEAKS'] = 1  # Number of Lorentzian peaks to fit per spectrum
+                       # 1: Single peak (monomers, simple nanoparticles)
+                       # 2: Two peaks (dimers, coupled nanoparticles)
+                       # 3+: Multiple peaks (complex coupled systems)
+
+args['PEAK_INITIAL_GUESS'] = 'auto'  # Initial guess for peak positions
+                                      # 'auto': Automatic peak detection using scipy.signal.find_peaks
+                                      # [650, 800]: Manual specification (wavelength in nm)
+                                      # Must provide NUM_PEAKS values if manual
+                                      # Example for 2 peaks: [650, 800]
+                                      # Example for 3 peaks: [600, 700, 850]
 
 # ============================================================================
 # ELECTROCHEMICAL REFERENCE PARAMETERS

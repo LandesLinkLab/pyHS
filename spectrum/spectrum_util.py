@@ -2,21 +2,24 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from scipy.signal import find_peaks
 from typing import List, Dict, Tuple, Optional, Any, Union
 
 def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
     """
-    Fit Lorentzian function to experimental spectrum data
+    Fit N Lorentzian peaks to experimental spectrum data
     
-    This function implements MATLAB-compatible Lorentzian fitting using the same
-    mathematical form and parameter definitions as the original MATLAB code.
-    The fitting is performed over a specified wavelength range but returns
-    the fit evaluated over the full wavelength array.
+    This function implements flexible multi-peak Lorentzian fitting that supports:
+    - Arbitrary number of peaks (1, 2, 3, 4, ...)
+    - Automatic peak detection or manual initial guess
+    - MATLAB-compatible single peak mode for backward compatibility
     
     Parameters:
     -----------
     args : Dict[str, Any]
         Configuration dictionary containing:
+        - NUM_PEAKS: Number of peaks to fit (default: 1)
+        - PEAK_INITIAL_GUESS: 'auto' or list of wavelengths in nm
         - FIT_RANGE_NM: Tuple of (min_wl, max_wl) for fitting range
     y : np.ndarray
         Experimental intensity data (spectrum)
@@ -26,89 +29,257 @@ def fit_lorentz(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.
     Returns:
     --------
     Tuple[np.ndarray, Dict[str, float], float]
-        - y_fit: Fitted Lorentzian curve over full wavelength range
-        - params: Dictionary with fitted parameters {'a': amplitude, 'b1': center, 'c1': FWHM}
+        - y_fit: Fitted curve over full wavelength range
+        - params: Dictionary with fitted parameters
+                  Single peak: {'a', 'b1', 'c1'}
+                  Multi peak: {'a1', 'b1', 'c1', 'a2', 'b2', 'c2', ...}
         - rsq: R-squared goodness of fit value
-    
-    Notes:
-    ------
-    The Lorentzian function used is: f(x) = (2*a/π) * (c / (4*(x-b)² + c²))
-    where: a = amplitude parameter, b = center wavelength, c = FWHM (Γ)
     """
+    num_peaks = args.get('NUM_PEAKS', 1)
+    peak_guess = args.get('PEAK_INITIAL_GUESS', 'auto')
+    
+    # Validate consistency
+    if peak_guess != 'auto' and not isinstance(peak_guess, (list, tuple)):
+        raise ValueError(f"PEAK_INITIAL_GUESS must be 'auto' or a list, got {type(peak_guess)}")
+    
+    if isinstance(peak_guess, (list, tuple)):
+        if len(peak_guess) != num_peaks:
+            raise ValueError(
+                f"PEAK_INITIAL_GUESS length ({len(peak_guess)}) "
+                f"must match NUM_PEAKS ({num_peaks})"
+            )
+        manual_positions = peak_guess
+    else:
+        manual_positions = None
+    
+    return fit_n_lorentz(args, y, x, num_peaks, manual_positions)
 
-    # Get fitting range from configuration
+
+def generate_initial_guess(y_fit: np.ndarray, 
+                          x_fit: np.ndarray, 
+                          num_peaks: int, 
+                          manual_positions: Optional[List[float]] = None) -> List[float]:
+    """
+    Generate initial parameter guesses for N-peak Lorentzian fitting
+    
+    Parameters:
+    -----------
+    y_fit : np.ndarray
+        Spectrum data in fitting range
+    x_fit : np.ndarray
+        Wavelength array in fitting range
+    num_peaks : int
+        Number of peaks to find
+    manual_positions : Optional[List[float]]
+        Manual peak positions in wavelength (nm)
+    
+    Returns:
+    --------
+    List[float]
+        Initial parameters [a1, b1, c1, a2, b2, c2, ...]
+    """
+    if manual_positions is not None:
+        # Mode B: Manual specification
+        print(f"[debug] Using manual peak positions: {manual_positions}")
+        p0 = []
+        
+        for pos in manual_positions:
+            # Find closest index to specified position
+            idx = np.argmin(np.abs(x_fit - pos))
+            
+            # Initial guess for this peak
+            a0 = max(y_fit[idx] * np.pi / 2, 0.1)  # Ensure positive
+            b0 = x_fit[idx]  # Use actual wavelength at this index
+            c0 = 50.0  # Default FWHM in nm
+            
+            p0.extend([a0, b0, c0])
+            print(f"  Peak at {pos} nm → idx={idx}, wl={b0:.1f} nm, amp={a0:.2f}")
+        
+        return p0
+    
+    else:
+        # Mode A: Automatic peak detection
+        print(f"[debug] Auto-detecting {num_peaks} peaks...")
+        
+        # Find peaks with scipy
+        peaks_idx, properties = find_peaks(
+            y_fit,
+            distance=10,  # Minimum distance between peaks
+            prominence=y_fit.max() * 0.05  # At least 5% of maximum
+        )
+        
+        print(f"[debug] Found {len(peaks_idx)} candidate peaks")
+        
+        if len(peaks_idx) < num_peaks:
+            print(f"[warning] Only found {len(peaks_idx)} peaks, needed {num_peaks}")
+            print(f"[warning] Filling missing peaks with uniform distribution")
+            
+            # Use found peaks and fill rest with uniform distribution
+            selected_peaks = list(peaks_idx)
+            
+            # Add uniformly spaced peaks in remaining space
+            missing = num_peaks - len(peaks_idx)
+            if missing > 0:
+                # Distribute evenly across spectrum
+                spacing = len(x_fit) // (missing + 1)
+                for i in range(1, missing + 1):
+                    extra_idx = i * spacing
+                    if extra_idx < len(x_fit):
+                        selected_peaks.append(extra_idx)
+            
+            selected_peaks = np.array(selected_peaks[:num_peaks])
+        
+        elif len(peaks_idx) > num_peaks:
+            # More peaks found than needed - select highest ones
+            peak_heights = y_fit[peaks_idx]
+            sorted_indices = np.argsort(peak_heights)[-num_peaks:]
+            selected_peaks = peaks_idx[sorted_indices]
+        
+        else:
+            # Exact match
+            selected_peaks = peaks_idx
+        
+        # Sort by wavelength (ascending)
+        selected_peaks = np.sort(selected_peaks)
+        
+        # Generate initial parameters
+        p0 = []
+        for idx in selected_peaks:
+            a0 = max(y_fit[idx] * np.pi / 2, 0.1)
+            b0 = x_fit[idx]
+            c0 = 50.0
+            
+            p0.extend([a0, b0, c0])
+            print(f"  Peak at idx={idx}, wl={b0:.1f} nm, amp={a0:.2f}")
+        
+        return p0
+
+
+def fit_n_lorentz(args: Dict[str, Any], 
+                  y: np.ndarray, 
+                  x: np.ndarray, 
+                  num_peaks: int,
+                  manual_positions: Optional[List[float]] = None) -> Tuple[np.ndarray, Dict[str, float], float]:
+    """Generic N-peak Lorentzian fitting function"""
+    
+    # Get fitting range
     fit_min, fit_max = args['FIT_RANGE_NM']
     mask = (x >= fit_min) & (x <= fit_max)
-    x_fit = x[mask]  # Wavelengths for fitting
-    y_fit = y[mask]  # Intensities for fitting
+    x_fit = x[mask]
+    y_fit = y[mask]
+    
+    # Define N-peak Lorentzian function
+    def lorentz_n(x_val, *params):
+        """Sum of N Lorentzian functions"""
+        result = np.zeros_like(x_val, dtype=float)
+        n = len(params) // 3
         
-    def lorentz_matlab_form(x, a, b, c):
-        """
-        MATLAB-compatible Lorentzian function
+        for i in range(n):
+            a = params[3*i]
+            b = params[3*i + 1]
+            c = params[3*i + 2]
+            result += (2*a/np.pi) * (c / (4*(x_val-b)**2 + c**2))
         
-        Parameters:
-        - a: Amplitude scaling factor
-        - b: Center wavelength (resonance position)
-        - c: Full Width at Half Maximum (FWHM)
-        """
-        return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
+        return result
     
     # Validate input data
     if len(y_fit) == 0 or np.all(y_fit == 0) or np.isnan(y_fit).any():
         print("[warning] Invalid spectrum data for fitting")
-        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+        # ✓ 수정 1
+        params = {}
+        for i in range(num_peaks):
+            peak_num = i + 1
+            params[f'a{peak_num}'] = 0
+            params[f'b{peak_num}'] = 0
+            params[f'c{peak_num}'] = 0
+        if num_peaks == 1:
+            params['a'] = 0
+            params['b1'] = 0
+            params['c1'] = 0
+        return np.zeros_like(y), params, 0.0
     
-    # Generate initial parameter estimates
-    idx = int(np.argmax(y_fit))  # Index of peak intensity
-    if y_fit[idx] <= 0:
+    # Check for positive values
+    if y_fit.max() <= 0:
         print("[warning] No positive values in spectrum")
-        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+        # ✓ 수정 2
+        params = {}
+        for i in range(num_peaks):
+            peak_num = i + 1
+            params[f'a{peak_num}'] = 0
+            params[f'b{peak_num}'] = 0
+            params[f'c{peak_num}'] = 0
+        if num_peaks == 1:
+            params['a'] = 0
+            params['b1'] = 0
+            params['c1'] = 0
+        return np.zeros_like(y), params, 0.0
     
-    # Initial parameter guesses
-    a0 = float(y_fit[idx] * np.pi / 2)  # Amplitude estimate
-    b0 = float(x_fit[idx])              # Center wavelength estimate
+    # Generate initial guess
+    p0 = generate_initial_guess(y_fit, x_fit, num_peaks, manual_positions)
     
-    # Estimate FWHM from half-maximum width
-    half_max = y_fit[idx] / 2
-    indices_above_half = np.where(y_fit > half_max)[0]
-    if len(indices_above_half) > 1:
-        c0 = float(x_fit[indices_above_half[-1]] - x_fit[indices_above_half[0]])
-    else:
-        c0 = 70.0  # Default FWHM if estimation fails
-    
-    p0 = [a0, b0, c0]  # Initial parameter vector
+    # Set bounds for all parameters
+    lower_bounds = [0, x_fit.min(), 0] * num_peaks
+    upper_bounds = [np.inf, x_fit.max(), np.inf] * num_peaks
     
     try:
-        # Set parameter bounds for physical constraints
-        bounds = ([0, x_fit.min(), 0],              # Lower bounds
-                 [np.inf, x_fit.max(), np.inf])     # Upper bounds
+        # Perform fitting
+        popt, pcov = curve_fit(
+            lorentz_n, 
+            x_fit, 
+            y_fit,
+            p0=p0,
+            bounds=(lower_bounds, upper_bounds),
+            maxfev=10000,
+            method='trf'
+        )
         
-        # Perform nonlinear least squares fitting
-        popt, pcov = curve_fit(lorentz_matlab_form, x_fit, y_fit, p0=p0, 
-                              bounds=bounds, maxfev=8000, 
-                              method='trf')
-        
-        # Generate fit curve over FULL wavelength range (not just fitting range)
-        y_fit_full = lorentz_matlab_form(x, *popt)
+        # Generate fitted curve over FULL wavelength range
+        y_fit_full = lorentz_n(x, *popt)
         
         # Calculate R-squared over fitting range only
-        y_fit_range = lorentz_matlab_form(x_fit, *popt)
-        ss_res = np.sum((y_fit - y_fit_range)**2)  # Sum of squared residuals
-        ss_tot = np.sum((y_fit - y_fit.mean())**2) # Total sum of squares
+        y_fit_range = lorentz_n(x_fit, *popt)
+        ss_res = np.sum((y_fit - y_fit_range)**2)
+        ss_tot = np.sum((y_fit - y_fit.mean())**2)
         rsq = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
         
-        # Package parameters in MATLAB-compatible format
-        params = {
-            'a': popt[0],   # Amplitude parameter
-            'b1': popt[1],  # Center wavelength (λ_max)
-            'c1': popt[2],  # FWHM (Γ)
-        }
+        # Package parameters into dictionary
+        params = {}
+        for i in range(num_peaks):
+            peak_num = i + 1
+            params[f'a{peak_num}'] = popt[3*i]
+            params[f'b{peak_num}'] = popt[3*i + 1]
+            params[f'c{peak_num}'] = popt[3*i + 2]
+        
+        # Backward compatibility: for single peak, also provide non-indexed keys
+        if num_peaks == 1:
+            params['a'] = params['a1']
+            # b1 and c1 already exist
+        
+        print(f"[debug] Fitting successful: R²={rsq:.4f}")
+        for i in range(num_peaks):
+            peak_num = i + 1
+            print(f"  Peak {peak_num}: λ={params[f'b{peak_num}']:.1f} nm, "
+                  f"FWHM={params[f'c{peak_num}']:.1f} nm")
         
         return y_fit_full, params, float(rsq)
     
     except Exception as e:
-        print(f"[warning] Fitting failed: {str(e)}")
-        return np.zeros_like(y), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+        print(f"[warning] {num_peaks}-peak Lorentzian fitting failed: {str(e)}")
+        
+        # ✓ 수정 3
+        params = {}
+        for i in range(num_peaks):
+            peak_num = i + 1
+            params[f'a{peak_num}'] = 0
+            params[f'b{peak_num}'] = 0
+            params[f'c{peak_num}'] = 0
+        if num_peaks == 1:
+            params['a'] = 0
+            params['b1'] = 0
+            params['c1'] = 0
+        
+        return np.zeros_like(y), params, 0.0
+
 
 def plot_spectrum(x: np.ndarray, 
                 y: np.ndarray, 
@@ -121,41 +292,13 @@ def plot_spectrum(x: np.ndarray,
                 args: Optional[Dict[str, Any]] = None,
                 show_fit: bool = True) -> None:
     """
-    Create publication-quality spectrum plot identical to MATLAB version
+    Create publication-quality spectrum plot
     
-    This function generates plots with MATLAB-compatible styling including:
-    - Consistent line styles and colors
-    - Large font sizes for readability
-    - Parameter annotations with proper formatting
-    - Fixed axis ranges for comparison
-    - Professional appearance for publications
-    
-    Parameters:
-    -----------
-    x : np.ndarray
-        Wavelength array
-    y : np.ndarray
-        Experimental spectrum data
-    y_fit : np.ndarray
-        Fitted Lorentzian curve
-    title : str
-        Plot title
-    out_png : Path
-        Output file path for saving
-    dpi : int
-        Resolution for saved figure (default: 300)
-    params : Optional[Dict[str, float]]
-        Fitting parameters for annotation
-    snr : Optional[float]
-        Signal-to-noise ratio for annotation
-    args : Optional[Dict[str, Any]]
-        Additional configuration parameters
-    show_fit : bool
-        Whether to show fitted curve (default: True)
+    Handles both single and multi-peak display with appropriate annotations.
     """
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    output_unit = args.get('OUTPUT_UNIT')
+    output_unit = args.get('OUTPUT_UNIT', 'nm')
 
     if output_unit == 'eV':
         x = 1239.842 / x
@@ -163,12 +306,6 @@ def plot_spectrum(x: np.ndarray,
         y = y[::-1]
         y_fit = y_fit[::-1]
 
-    elif output_unit == 'nm':
-        pass
-
-    else:
-        raise ValueError("Invalid x-axis unit")
-    
     # Plot data
     ax.plot(x, y, 'b-', linewidth=3, label='Data')
     
@@ -176,7 +313,7 @@ def plot_spectrum(x: np.ndarray,
     if show_fit:
         ax.plot(x, y_fit, 'k--', linewidth=3, label='Lorentz fit')
     
-    # Axis labels with large font sizes (MATLAB-compatible)
+    # Axis labels
     if output_unit == 'eV':
         ax.set_xlabel('Energy (eV)', fontsize=32)
     else:
@@ -184,54 +321,77 @@ def plot_spectrum(x: np.ndarray,
 
     ax.set_ylabel('Scattering', fontsize=32)
     
-    # Large tick labels for readability
+    # Tick labels
     ax.tick_params(axis='both', which='major', labelsize=22)
     
-    # Show all box edges (MATLAB default)
+    # Show all box edges
     ax.spines['top'].set_visible(True)
     ax.spines['right'].set_visible(True)
     
-    # Add parameter text annotations if available and showing fit
+    # Add parameter annotations if available
     if show_fit and params is not None and snr is not None:
-        lambda_max_nm = params.get('b1', 0)  # Center wavelength
-        lambda_max_ev = 1239.842 / lambda_max_nm
-        gamma_nm = params.get('c1', 0)       # FWHM
-        gamma_eV = 1239.842 / (lambda_max_nm - gamma_nm/2) - 1239.842/(lambda_max_nm + gamma_nm/2)
+        # Determine number of peaks from params
+        num_peaks = sum(1 for key in params.keys() if key.startswith('b'))
         
-        # Position annotations in upper right area
-        if output_unit == 'nm':
-            ax.text(0.55, 0.9, f'λ_max = {lambda_max_nm:.0f} nm', transform=ax.transAxes, fontsize=20)
-            ax.text(0.55, 0.78, f'Γ = {gamma_nm:.0f} nm', transform=ax.transAxes, fontsize=20)
-            ax.text(0.55, 0.66, f'S/N = {snr:.0f}', transform=ax.transAxes, fontsize=20)
-
-        elif output_unit == 'eV':
-            ax.text(0.55, 0.9, f'E_max = {lambda_max_ev:.3f} eV', transform=ax.transAxes, fontsize=20)
-            ax.text(0.55, 0.78, f'Γ = {gamma_eV:.3f} eV', transform=ax.transAxes, fontsize=20)
-            ax.text(0.55, 0.66, f'S/N = {snr:.0f}', transform=ax.transAxes, fontsize=20)
+        text_y_start = 0.9
+        text_y_step = 0.12
+        
+        for i in range(num_peaks):
+            peak_num = i + 1
+            
+            # Get parameters for this peak
+            b_key = f'b{peak_num}'
+            c_key = f'c{peak_num}'
+            
+            if b_key in params and c_key in params:
+                lambda_max_nm = params[b_key]
+                gamma_nm = params[c_key]
+                
+                if output_unit == 'nm':
+                    text_y = text_y_start - i * text_y_step
+                    ax.text(0.55, text_y, 
+                           f'Peak {peak_num}: λ={lambda_max_nm:.0f} nm, Γ={gamma_nm:.0f} nm',
+                           transform=ax.transAxes, fontsize=18)
+                
+                elif output_unit == 'eV':
+                    lambda_max_ev = 1239.842 / lambda_max_nm
+                    gamma_eV = abs(1239.842 / (lambda_max_nm - gamma_nm/2) - 
+                                  1239.842 / (lambda_max_nm + gamma_nm/2))
+                    
+                    text_y = text_y_start - i * text_y_step
+                    ax.text(0.55, text_y,
+                           f'Peak {peak_num}: E={lambda_max_ev:.3f} eV, Γ={gamma_eV:.3f} eV',
+                           transform=ax.transAxes, fontsize=18)
+        
+        # Add SNR below all peaks
+        snr_y = text_y_start - num_peaks * text_y_step
+        ax.text(0.55, snr_y, f'S/N = {snr:.0f}', 
+               transform=ax.transAxes, fontsize=20)
     
-    # Set fixed axis ranges for consistency across plots
+    # Set axis ranges
     xmin, xmax = args['CROP_RANGE_NM']
     if output_unit == 'nm':
         ax.set_xlim(xmin, xmax)
     elif output_unit == 'eV':
         ax.set_xlim(1239.842 / xmax, 1239.842 / xmin)
     
-    # Set Y-axis range with error protection
+    # Y-axis range
     y_max = max(y.max(), y_fit.max() if show_fit else 0) if len(y) > 0 else 1.0
     if y_max <= 0:
         y_max = 1.0
-    ax.set_ylim(0, y_max * 1.05)  # 5% padding above maximum
+    ax.set_ylim(0, y_max * 1.05)
     
-    # Add title
+    # Title
     ax.set_title(title, fontsize=16)
     
-    # Remove grid for clean appearance
+    # No grid
     ax.grid(False)
     
-    # Save figure with tight layout
+    # Save
     fig.tight_layout()
     fig.savefig(out_png, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
+
 
 def save_dfs_particle_map(max_map: np.ndarray, 
                         representatives: List[Dict[str, Any]], 
@@ -240,60 +400,40 @@ def save_dfs_particle_map(max_map: np.ndarray,
                         args: Optional[Dict[str, Any]] = None) -> None:
     """
     Save annotated particle map showing all analyzed particles with markers
-    
-    This function creates a publication-ready particle map that includes:
-    - Background intensity map with optimized contrast
-    - Numbered particle markers with consistent styling
-    - Resonance wavelength annotations
-    - Professional color scheme and formatting
-    - Scalable vector graphics elements for publication use
-    
-    Parameters:
-    -----------
-    max_map : np.ndarray
-        2D maximum intensity map as background
-    representatives : List[Dict[str, Any]]
-        List of representative particle data including positions and parameters
-    output_path : Path
-        Full path for saving the output image
-    sample_name : str
-        Sample name for plot title
     """
     fig, ax = plt.subplots(figsize=(10, 10))
     
-    # Set dynamic contrast based on non-zero values for better visibility
+    # Dynamic contrast
     if np.any(max_map > 0):
         vmin, vmax = np.percentile(max_map[max_map > 0], [5, 95])
     else:
         vmin, vmax = (0, 1)
     
-    # Display intensity map with hot colormap (standard for thermal imaging)
+    # Display intensity map
     im = ax.imshow(max_map,
-                   cmap='hot',                    # Hot colormap for intensity
-                   origin='lower',                # Origin at bottom-left
-                   vmin=vmin, vmax=vmax,         # Dynamic range
-                   interpolation='nearest')       # No interpolation for pixel data
+                   cmap='hot',
+                   origin='lower',
+                   vmin=vmin, vmax=vmax,
+                   interpolation='nearest')
     
-    # Add colorbar with proper formatting
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label('Max Intensity', fontsize=12)
     
-    output_unit = args.get('OUTPUT_UNIT')
+    output_unit = args.get('OUTPUT_UNIT', 'nm')
 
-    # Add particle markers and annotations
+    # Add particle markers
     for i, rep in enumerate(representatives):
         row, col = rep['row'], rep['col']
         
-        # White circle marker for high visibility on hot colormap
         particle_num = i + 1
-        circle_inner = plt.Circle((col, row), 
-                                 radius=1.5,
-                                 edgecolor='white',
-                                 facecolor='none',
-                                 linewidth=2)
-        ax.add_patch(circle_inner)
+        circle = plt.Circle((col, row), 
+                           radius=1.5,
+                           edgecolor='white',
+                           facecolor='none',
+                           linewidth=2)
+        ax.add_patch(circle)
         
-        # Particle number label with black background for readability
+        # Particle number
         ax.text(col - 1, row + 3,
                 f'{particle_num}',
                 color='white',
@@ -301,8 +441,8 @@ def save_dfs_particle_map(max_map: np.ndarray,
                 fontweight='bold',
                 bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
         
+        # Peak wavelength (only show first peak for multi-peak)
         if output_unit == 'eV':
-            
             energy = 1239.842 / rep['peak_wl']
             ax.text(col - 3, row - 3,
                     f'{energy:.3f} eV',
@@ -310,9 +450,7 @@ def save_dfs_particle_map(max_map: np.ndarray,
                     fontsize=6,
                     fontweight='bold',
                     ha='left')
-
         else:
-
             ax.text(col - 3, row - 3,
                     f'{rep["peak_wl"]:.0f} nm',
                     color='yellow',
@@ -320,16 +458,16 @@ def save_dfs_particle_map(max_map: np.ndarray,
                     fontweight='bold',
                     ha='left')
     
-    # Title and axis labels
+    # Title and labels
     ax.set_title(f'{sample_name} - DFS Particle Map ({len(representatives)} particles)', 
                 fontsize=16, pad=10)
     ax.set_xlabel('X (pixels)', fontsize=12)
     ax.set_ylabel('Y (pixels)', fontsize=12)
     
-    # Add grid for easier position reading
+    # Grid
     ax.grid(True, alpha=0.3, linestyle='--', color='white')
     
-    # Save with high quality
+    # Save
     plt.tight_layout()
     fig.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close(fig)

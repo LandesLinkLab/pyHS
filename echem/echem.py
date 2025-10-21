@@ -6,7 +6,8 @@ from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional, Any
-from scipy.optimize import curve_fit  # ← 추가!
+from scipy.signal import find_peaks
+from scipy.optimize import curve_fit
 
 # Import from spectrum module (reuse Lorentzian fitting)
 from spectrum import spectrum_util as su
@@ -43,7 +44,6 @@ class EChemAnalyzer:
         
         # Analysis parameters
         self.technique = args.get('ECHEM_TECHNIQUE', 'CV')
-        self.scatt_type = args.get('ECHEM_SCATT_TYPE', 'single')
         self.ocp = args.get('ECHEM_OCP', 0.0)
         self.cycle_start = args.get('ECHEM_CYCLE_START', 1)
         self.cycle_backcut = args.get('ECHEM_CYCLE_BACKCUT', 0)
@@ -71,7 +71,10 @@ class EChemAnalyzer:
     
     def fit_lorentz_energy(self, energy: np.ndarray, spectrum: np.ndarray) -> Tuple[np.ndarray, Dict[str, float], float]:
         """
-        Fit Lorentzian in energy space
+        Fit N Lorentzian peaks in energy space (eV)
+        
+        This wrapper converts wavelength-based initial guess to energy space
+        and calls the generic N-peak fitting function.
         
         Parameters:
         -----------
@@ -83,93 +86,177 @@ class EChemAnalyzer:
         Returns:
         --------
         Tuple[np.ndarray, Dict[str, float], float]
-            - Fitted curve
-            - Parameters dict with keys: 'a', 'b1' (peak in eV), 'c1' (FWHM in eV)
+            - Fitted curve in energy space
+            - Parameters dict: 'a1', 'b1' (eV), 'c1' (eV), 'a2', 'b2', 'c2', ...
             - R-squared value
         """
         
-        def lorentz_energy(E, a, E0, gamma):
-            """
-            Lorentzian in energy space
-            E0: peak energy (eV)
-            gamma: FWHM (eV)
-            """
-            return (2*a/np.pi) * (gamma / (4*(E-E0)**2 + gamma**2))
+        
+        num_peaks = self.args.get('NUM_PEAKS', 1)
+        peak_guess = self.args.get('PEAK_INITIAL_GUESS', 'auto')
+        
+        # Convert manual wavelength guess to energy
+        manual_positions_ev = None
+        if peak_guess != 'auto' and isinstance(peak_guess, (list, tuple)):
+            # Convert nm to eV
+            manual_positions_ev = [1239.842 / wl_nm for wl_nm in peak_guess]
+            # Sort in ascending energy order (descending wavelength)
+            manual_positions_ev = sorted(manual_positions_ev)
+            print(f"[debug] Converted manual guess: {peak_guess} nm → {manual_positions_ev} eV")
+        
+        # Define N-peak Lorentzian in energy space
+        def lorentz_n_energy(E, *params):
+            """N Lorentzian peaks in energy space"""
+            result = np.zeros_like(E, dtype=float)
+            n = len(params) // 3
+            
+            for i in range(n):
+                a = params[3*i]
+                E0 = params[3*i + 1]
+                gamma = params[3*i + 2]
+                result += (2*a/np.pi) * (gamma / (4*(E-E0)**2 + gamma**2))
+            
+            return result
         
         # Validate input
         if len(spectrum) == 0 or np.all(spectrum <= 0) or np.isnan(spectrum).any():
-            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+            print("[warning] Invalid spectrum for energy fitting")
+
+            for i in range(num_peaks):
+
+                peak_num = i + 1
+                params[f'a{peak_num}'] = 0
+                params[f'b{peak_num}'] = 0
+                params[f'c{peak_num}'] = 0
+
+            return np.zeros_like(spectrum), params, 0.0
         
-        # Check if spectrum has sufficient variation
+        # Check variation
         if spectrum.max() - spectrum.min() < 0.01:
             print(f"[warning] Spectrum has insufficient variation")
-            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+
+            for i in range(num_peaks):
+
+                peak_num = i + 1
+                params[f'a{peak_num}'] = 0
+                params[f'b{peak_num}'] = 0
+                params[f'c{peak_num}'] = 0
+
+            return np.zeros_like(spectrum), params, 0.0
         
-        # Initial parameter guesses
-        idx_max = np.argmax(spectrum)
+        # Generate initial guess
+        if manual_positions_ev is not None:
+            # Manual mode
+            p0 = []
+            for E_pos in manual_positions_ev:
+                idx = np.argmin(np.abs(energy - E_pos))
+                a0 = spectrum[idx] * np.pi / 2
+                E0 = energy[idx]
+                gamma0 = 0.1  # Default FWHM in eV
+                p0.extend([a0, E0, gamma0])
+                print(f"  Peak at {E_pos:.3f} eV → idx={idx}, E={E0:.3f} eV, amp={a0:.2f}")
         
-        if spectrum[idx_max] <= 0:
-            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
-        
-        # Initial guesses
-        a0 = spectrum[idx_max] * np.pi / 2
-        E0 = energy[idx_max]  # Peak energy
-        
-        # Estimate FWHM
-        half_max = spectrum[idx_max] / 2
-        above_half = spectrum > half_max
-        if np.sum(above_half) > 1:
-            indices = np.where(above_half)[0]
-            gamma0 = abs(energy[indices[-1]] - energy[indices[0]])
-            gamma0 = max(gamma0, 0.01)  # Minimum FWHM
         else:
-            gamma0 = 0.1  # Default FWHM: 0.1 eV
-        
-        p0 = [a0, E0, gamma0]
-        
-        try:
-            # Set bounds (energy space)
-            bounds = (
-                [0, energy.min(), 0.001],           # Lower bounds
-                [np.inf, energy.max(), 2.0]         # Upper bounds (max FWHM = 2 eV)
+            # Auto mode
+            peaks_idx, properties = find_peaks(
+                spectrum,
+                distance=10,
+                prominence=spectrum.max() * 0.05
             )
             
-            # Perform fitting
+            print(f"[debug] Auto-detected {len(peaks_idx)} candidate peaks in energy space")
+            
+            if len(peaks_idx) < num_peaks:
+                print(f"[warning] Only found {len(peaks_idx)} peaks, needed {num_peaks}")
+                selected_peaks = list(peaks_idx)
+                
+                # Fill missing peaks
+                missing = num_peaks - len(peaks_idx)
+                if missing > 0:
+                    spacing = len(energy) // (missing + 1)
+                    for i in range(1, missing + 1):
+                        extra_idx = i * spacing
+                        if extra_idx < len(energy):
+                            selected_peaks.append(extra_idx)
+                
+                selected_peaks = np.array(selected_peaks[:num_peaks])
+            
+            elif len(peaks_idx) > num_peaks:
+                peak_heights = spectrum[peaks_idx]
+                sorted_indices = np.argsort(peak_heights)[-num_peaks:]
+                selected_peaks = peaks_idx[sorted_indices]
+            
+            else:
+                selected_peaks = peaks_idx
+            
+            # Sort by energy (ascending)
+            selected_peaks = np.sort(selected_peaks)
+            
+            # Generate p0
+            p0 = []
+            for idx in selected_peaks:
+                a0 = spectrum[idx] * np.pi / 2
+                E0 = energy[idx]
+                gamma0 = 0.1  # 0.1 eV default
+                p0.extend([a0, E0, gamma0])
+                print(f"  Peak at idx={idx}, E={E0:.3f} eV, amp={a0:.2f}")
+        
+        # Set bounds
+        lower_bounds = [0, energy.min(), 0.001] * num_peaks
+        upper_bounds = [np.inf, energy.max(), 2.0] * num_peaks
+        
+        try:
+            from scipy.optimize import curve_fit
+            
             popt, pcov = curve_fit(
-                lorentz_energy, 
-                energy, 
-                spectrum, 
+                lorentz_n_energy,
+                energy,
+                spectrum,
                 p0=p0,
-                bounds=bounds,
-                maxfev=8000,
+                bounds=(lower_bounds, upper_bounds),
+                maxfev=10000,
                 method='trf'
             )
             
-            # Generate fitted curve
-            y_fit = lorentz_energy(energy, *popt)
+            # Generate fit
+            y_fit = lorentz_n_energy(energy, *popt)
             
-            # Calculate R-squared
+            # Calculate R²
             ss_res = np.sum((spectrum - y_fit)**2)
             ss_tot = np.sum((spectrum - spectrum.mean())**2)
             
-            # Handle edge cases for R²
-            if ss_tot < 1e-10:  # Essentially flat spectrum
+            if ss_tot < 1e-10:
                 r2 = 0.0
             else:
                 r2 = 1 - (ss_res / ss_tot)
             
             # Package parameters
-            params = {
-                'a': popt[0],    # Amplitude
-                'b1': popt[1],   # Peak energy (eV)
-                'c1': popt[2]    # FWHM (eV)
-            }
+            params = {}
+            for i in range(num_peaks):
+                peak_num = i + 1
+                params[f'a{peak_num}'] = popt[3*i]
+                params[f'b{peak_num}'] = popt[3*i + 1]  # Energy in eV
+                params[f'c{peak_num}'] = popt[3*i + 2]  # FWHM in eV
+            
+            print(f"[debug] Energy fitting successful: R²={r2:.4f}")
+            for i in range(num_peaks):
+                peak_num = i + 1
+                print(f"  Peak {peak_num}: E={params[f'b{peak_num}']:.3f} eV, "
+                      f"FWHM={params[f'c{peak_num}']:.3f} eV")
             
             return y_fit, params, float(r2)
         
         except Exception as e:
-            print(f"[warning] Fitting failed: {str(e)}")
-            return np.zeros_like(spectrum), {'a': 0, 'b1': 0, 'c1': 0}, 0.0
+            print(f"[warning] {num_peaks}-peak energy fitting failed: {str(e)}")
+
+            for i in range(num_peaks):
+
+                peak_num = i + 1
+                params[f'a{peak_num}'] = 0
+                params[f'b{peak_num}'] = 0
+                params[f'c{peak_num}'] = 0
+
+            return np.zeros_like(spectrum), params, 0.0
     
     def fit_all_spectra(self):
         """
@@ -299,11 +386,25 @@ class EChemAnalyzer:
                 'snr': snr,
                 'peakeV1': params.get('b1', 0),
                 'FWHMeV1': params.get('c1', 0),
-                'area1': params.get('a', 0),
+                'area1': params.get('a1', 0),
                 'peaknm1': 1239.842 / params.get('b1', 1) if params.get('b1', 0) > 0 else 0,
                 'FWHMnm1': self.convert_fwhm_ev_to_nm(params.get('b1', 0), params.get('c1', 0))
             }
-            
+
+            # Add multi-peak parameters if NUM_PEAKS > 1
+            num_peaks = self.args.get('NUM_PEAKS', 1)
+            if num_peaks > 1:
+                for peak_idx in range(2, num_peaks + 1):
+                    result[f'peakeV{peak_idx}'] = params.get(f'b{peak_idx}', 0)
+                    result[f'FWHMeV{peak_idx}'] = params.get(f'c{peak_idx}', 0)
+                    result[f'area{peak_idx}'] = params.get(f'a{peak_idx}', 0)
+                    
+                    peak_ev = params.get(f'b{peak_idx}', 0)
+                    result[f'peaknm{peak_idx}'] = 1239.842 / peak_ev if peak_ev > 0 else 0
+                    result[f'FWHMnm{peak_idx}'] = self.convert_fwhm_ev_to_nm(
+                        peak_ev, params.get(f'c{peak_idx}', 0)
+                    )
+
             self.fitted_params.append(result)
             
             if i % 10 == 0:
@@ -600,28 +701,24 @@ class EChemAnalyzer:
         print(f"[info] Saved cycle-averaged plot: {output_path}")
     
     def save_spectra_data(self):
-        """
-        Export spectral data and fitted parameters to text files and plots
-        """
+        """Export spectral data and fitted parameters to text files and plots"""
         print("\n[Step] Saving spectral data and plots...")
         
         output_dir = Path(self.args['OUTPUT_DIR']) / "spectra"
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create subdirectories for different plot types
         plots_dir = output_dir / "plots"
         plots_raw_dir = output_dir / "plots_raw"
         plots_dir.mkdir(parents=True, exist_ok=True)
         plots_raw_dir.mkdir(parents=True, exist_ok=True)
 
         output_unit = self.args.get('OUTPUT_UNIT', 'eV')
+        num_peaks = self.args.get('NUM_PEAKS', 1)
         
-        # Save individual spectra with fits
         for i, param in enumerate(self.fitted_params):
             
             # ===== Save text data =====
             if output_unit == 'nm':
-                # For nm output: reverse arrays for text file
                 data = np.column_stack((
                     self.dataset.wavelengths[::-1], 
                     param['spectrum'][::-1], 
@@ -629,12 +726,18 @@ class EChemAnalyzer:
                 ))
 
                 header = f"Wavelength (nm)\tIntensity\tFit\n"
-                header += f"# Peak: {param['peaknm1']:.1f} nm, FWHM: {param['FWHMnm1']:.1f} nm\n"
+                
+                # Add all peaks to header
+                for peak_idx in range(1, num_peaks + 1):
+                    peak_nm = param.get(f'peaknm{peak_idx}', 0)
+                    fwhm_nm = param.get(f'FWHMnm{peak_idx}', 0)
+                    if peak_nm > 0:
+                        header += f"# Peak {peak_idx}: {peak_nm:.1f} nm, FWHM: {fwhm_nm:.1f} nm\n"
+                
                 header += f"# Spectrum {i+1}, Time={param['time']:.2f}s, Voltage={param['voltage']:.3f}V\n"
                 header += f"# R²: {param['r2']:.4f}, SNR: {param['snr']:.1f}"
 
             else:
-                # For eV output: use energy array
                 energy = 1239.842 / self.dataset.wavelengths
                 data = np.column_stack((
                     energy,
@@ -643,7 +746,14 @@ class EChemAnalyzer:
                 ))
 
                 header = f"Energy (eV)\tIntensity\tFit\n"
-                header += f"# Peak: {param['peakeV1']:.3f} eV, FWHM: {param['FWHMeV1']:.3f} eV\n"
+                
+                # Add all peaks to header
+                for peak_idx in range(1, num_peaks + 1):
+                    peak_ev = param.get(f'peakeV{peak_idx}', 0)
+                    fwhm_ev = param.get(f'FWHMeV{peak_idx}', 0)
+                    if peak_ev > 0:
+                        header += f"# Peak {peak_idx}: {peak_ev:.3f} eV, FWHM: {fwhm_ev:.3f} eV\n"
+                
                 header += f"# Spectrum {i+1}, Time={param['time']:.2f}s, Voltage={param['voltage']:.3f}V\n"
                 header += f"# R²: {param['r2']:.4f}, SNR: {param['snr']:.1f}"
             
@@ -652,41 +762,37 @@ class EChemAnalyzer:
             np.savetxt(output_file, data, delimiter='\t', header=header, 
                       comments='', fmt='%.6f')
             
-            # ===== Generate visualization plots =====
-            # Create plot title with time and voltage info
+            # Generate plots (existing code continues...)
             plot_title = f"Spectrum {i+1} | t={param['time']:.1f}s, V={param['voltage']:.3f}V"
             
-            # Plot 1: With fitted curve (plots/)
             plot_path = plots_dir / f"{self.dataset.sample_name}_spectrum_{i+1:04d}.png"
             su.plot_spectrum(
-                self.dataset.wavelengths,   # Original wavelength array
-                param['spectrum'],          # Original spectrum
-                param['fit'],              # Original fit
-                plot_title,                # Title with time/voltage
-                plot_path,                 # Output path
-                dpi=self.args.get("FIG_DPI", 300),  # Resolution
-                params=param['params'],    # Fitting parameters
-                snr=param['snr'],         # Signal-to-noise ratio
-                args=self.args,           # Configuration
-                show_fit=True             # Show fit curve
+                self.dataset.wavelengths,
+                param['spectrum'],
+                param['fit'],
+                plot_title,
+                plot_path,
+                dpi=self.args.get("FIG_DPI", 300),
+                params=param['params'],
+                snr=param['snr'],
+                args=self.args,
+                show_fit=True
             )
             
-            # Plot 2: Raw data only (plots_raw/)
             plot_path_raw = plots_raw_dir / f"{self.dataset.sample_name}_spectrum_{i+1:04d}.png"
             su.plot_spectrum(
-                self.dataset.wavelengths,   # Original wavelength array
-                param['spectrum'],          # Original spectrum
-                param['fit'],              # Original fit (not displayed)
-                plot_title,                # Title with time/voltage
-                plot_path_raw,            # Output path
-                dpi=self.args.get("FIG_DPI", 300),  # Resolution
-                params=None,               # No parameter annotations
-                snr=None,                  # No SNR annotation
-                args=self.args,           # Configuration
-                show_fit=False            # Hide fit curve
+                self.dataset.wavelengths,
+                param['spectrum'],
+                param['fit'],
+                plot_title,
+                plot_path_raw,
+                dpi=self.args.get("FIG_DPI", 300),
+                params=None,
+                snr=None,
+                args=self.args,
+                show_fit=False
             )
             
-            # Progress indicator
             if (i + 1) % 10 == 0 or (i + 1) == len(self.fitted_params):
                 print(f"  Saved {i+1}/{len(self.fitted_params)} spectra (text + 2 plots)")
         
@@ -694,7 +800,6 @@ class EChemAnalyzer:
         print(f"[info] Saved {len(self.fitted_params)} plots with fit to {plots_dir}")
         print(f"[info] Saved {len(self.fitted_params)} raw-only plots to {plots_raw_dir}")
         
-        # Save cycle-averaged data using utility function
         if len(self.cycles) > 0:
             eu.save_echem_cycle_data(self.cycles, output_dir, self.dataset.sample_name)
 
@@ -731,6 +836,14 @@ class EChemAnalyzer:
         print("="*60)
         print(f"Sample: {self.dataset.sample_name}")
         print(f"Technique: {self.technique}")
+        print(f"Fitting mode: {self.args.get('NUM_PEAKS', 1)} peak(s)")
+        
+        peak_guess = self.args.get('PEAK_INITIAL_GUESS', 'auto')
+        if peak_guess != 'auto':
+            print(f"Initial guess: {peak_guess} nm")
+        else:
+            print(f"Initial guess: auto-detect")
+        
         print(f"Total spectra: {self.dataset.spectra.shape[0]}")
         print(f"Successfully fitted: {len(self.fitted_params)}")
         print(f"Rejected fits: {len(self.rejected_fits)}")
