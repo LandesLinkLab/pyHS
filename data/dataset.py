@@ -470,24 +470,187 @@ class Dataset(object):
         output_dir = self.echem_output_dir / "debug"
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Plot 1: Spectral heatmap
-        fig, ax = plt.subplots(figsize=(12, 6))
+        num_peaks = self.args.get('NUM_PEAKS', 1)
         
-        im = ax.imshow(self.spectra.T, aspect='auto', cmap='hot',
-                      extent=[self.spec_times.min(), self.spec_times.max(),
-                             self.wavelengths.min(), self.wavelengths.max()],
-                      origin='lower')
+        # ========================================
+        # 1. 전체 스펙트럼 범위 heatmap (eV 단위) + voltage
+        # ========================================
+        print("[debug] Saving full-range spectral heatmap (eV)...")
         
-        ax.set_xlabel('Time (s)', fontsize=12)
-        ax.set_ylabel('Wavelength (nm)', fontsize=12)
-        ax.set_title(f'{self.sample_name} - Spectral Evolution', fontsize=14)
+        fig, (ax_heat, ax_volt) = plt.subplots(2, 1, figsize=(12, 8), 
+                                                gridspec_kw={'height_ratios': [3, 1]})
         
-        plt.colorbar(im, ax=ax, label='Intensity (a.u.)')
+        # nm → eV 변환
+        energy = 1239.842 / self.wavelengths
+        
+        # 에너지 증가 순으로 정렬
+        sort_idx = np.argsort(energy)
+        energy_sorted = energy[sort_idx]
+        spectra_sorted = self.spectra[:, sort_idx]
+        
+        # Heatmap
+        im = ax_heat.imshow(spectra_sorted.T, aspect='auto', cmap='hot',
+                            extent=[self.spec_times.min(), self.spec_times.max(),
+                                   energy_sorted.min(), energy_sorted.max()],
+                            origin='lower')
+        
+        ax_heat.set_ylabel('Energy (eV)', fontsize=12, fontweight='bold')
+        ax_heat.set_title(f'{self.sample_name} - Spectral Evolution (Full Range)', 
+                          fontsize=14, pad=20)
+        ax_heat.tick_params(labelsize=10)
+        ax_heat.set_xticklabels([])
+        # ✓ y축 범위를 실제 데이터 범위로 설정
+        ax_heat.set_ylim(energy_sorted.min(), energy_sorted.max())
+        
+        # Colorbar 상단 배치
+        cbar = plt.colorbar(im, ax=ax_heat, location='top', pad=0.02, fraction=0.05)
+        cbar.set_label('Intensity (a.u.)', fontsize=10)
+        
+        # Voltage를 두 번째 x축으로 추가
+        ax2 = ax_heat.twiny()
+        ax2.plot(self.spec_times, self.voltages, 'r-', linewidth=0, alpha=0)
+        ax2.set_xlabel('Voltage (V)', fontsize=12, fontweight='bold', color='red')
+        ax2.tick_params(axis='x', labelcolor='red', labelsize=10)
+        ax2.set_xlim(self.spec_times.min(), self.spec_times.max())
+        
+        # Voltage tick 생성
+        v_min, v_max = self.voltages.min(), self.voltages.max()
+        v_ticks = np.linspace(v_min, v_max, 5)
+        
+        t_ticks = []
+        for v in v_ticks:
+            idx = np.argmin(np.abs(self.voltages - v))
+            t_ticks.append(self.spec_times[idx])
+        
+        ax2.set_xticks(t_ticks)
+        ax2.set_xticklabels([f'{v:.2f}' for v in v_ticks])
+        
+        # Voltage trace subplot
+        ax_volt.plot(self.spec_times, self.voltages, 'r-', linewidth=1.5)
+        ax_volt.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
+        ax_volt.set_ylabel('Voltage (V)', fontsize=12, fontweight='bold')
+        ax_volt.tick_params(labelsize=10)
+        ax_volt.grid(True, alpha=0.3)
+        ax_volt.set_xlim(self.spec_times.min(), self.spec_times.max())
+        
         plt.tight_layout()
-        plt.savefig(output_dir / f"{self.sample_name}_spectral_heatmap.png", dpi=150)
+        plt.savefig(output_dir / f"{self.sample_name}_spectral_heatmap_full_eV.png", dpi=150)
         plt.close()
         
-        # Plot 2: Voltage trace
+        # ========================================
+        # 2. 각 피크별 개별 heatmap (eV 단위) + voltage
+        # ========================================
+        print(f"[debug] Saving individual peak heatmaps ({num_peaks} peaks)...")
+        
+        for peak_idx in range(num_peaks):
+            wl_min = self.wavelengths.min()
+            wl_max = self.wavelengths.max()
+            wl_range = wl_max - wl_min
+            
+            # 각 피크에 적절한 범위 할당
+            if num_peaks == 1:
+                peak_wl_min = wl_min
+                peak_wl_max = wl_max
+            elif num_peaks == 2:
+                if peak_idx == 0:
+                    peak_wl_min = wl_min
+                    peak_wl_max = wl_min + wl_range * 0.6
+                else:
+                    peak_wl_min = wl_min + wl_range * 0.4
+                    peak_wl_max = wl_max
+            elif num_peaks == 3:
+                if peak_idx == 0:
+                    peak_wl_min = wl_min
+                    peak_wl_max = wl_min + wl_range * 0.4
+                elif peak_idx == 1:
+                    peak_wl_min = wl_min + wl_range * 0.3
+                    peak_wl_max = wl_min + wl_range * 0.7
+                else:
+                    peak_wl_min = wl_min + wl_range * 0.6
+                    peak_wl_max = wl_max
+            else:
+                segment_size = wl_range / num_peaks
+                peak_wl_min = wl_min + segment_size * peak_idx
+                peak_wl_max = wl_min + segment_size * (peak_idx + 1)
+            
+            # 해당 범위 마스크
+            mask = (self.wavelengths >= peak_wl_min) & (self.wavelengths <= peak_wl_max)
+            
+            if not np.any(mask):
+                print(f"  Peak {peak_idx+1}: No data in range")
+                continue
+            
+            # 추출
+            wl_subset = self.wavelengths[mask]
+            spectra_subset = self.spectra[:, mask]
+            
+            # nm → eV
+            energy_subset = 1239.842 / wl_subset
+            sort_idx_sub = np.argsort(energy_subset)
+            energy_subset = energy_subset[sort_idx_sub]
+            spectra_subset = spectra_subset[:, sort_idx_sub]
+            
+            # Plot: 2개 subplot (heatmap + voltage)
+            fig, (ax_heat, ax_volt) = plt.subplots(2, 1, figsize=(12, 8),
+                                                    gridspec_kw={'height_ratios': [3, 1]})
+            
+            # Heatmap
+            im = ax_heat.imshow(spectra_subset.T, aspect='auto', cmap='hot',
+                               extent=[self.spec_times.min(), self.spec_times.max(),
+                                      energy_subset.min(), energy_subset.max()],
+                               origin='lower')
+            
+            ax_heat.set_ylabel('Energy (eV)', fontsize=12, fontweight='bold')
+            ax_heat.set_title(f'{self.sample_name} - Peak {peak_idx+1} Spectral Evolution',
+                             fontsize=14, pad=20)
+            ax_heat.tick_params(labelsize=10)
+            ax_heat.set_xticklabels([])
+            # ✓ y축 범위를 실제 데이터 범위로 설정
+            ax_heat.set_ylim(energy_subset.min(), energy_subset.max())
+            
+            # Colorbar 상단
+            cbar = plt.colorbar(im, ax=ax_heat, location='top', pad=0.02, fraction=0.05)
+            cbar.set_label('Intensity (a.u.)', fontsize=10)
+            
+            # Voltage를 두 번째 x축으로 추가
+            ax2 = ax_heat.twiny()
+            ax2.plot(self.spec_times, self.voltages, 'r-', linewidth=0, alpha=0)
+            ax2.set_xlabel('Voltage (V)', fontsize=12, fontweight='bold', color='red')
+            ax2.tick_params(axis='x', labelcolor='red', labelsize=10)
+            ax2.set_xlim(self.spec_times.min(), self.spec_times.max())
+            
+            # Voltage tick
+            v_min, v_max = self.voltages.min(), self.voltages.max()
+            v_ticks = np.linspace(v_min, v_max, 5)
+            
+            t_ticks = []
+            for v in v_ticks:
+                idx = np.argmin(np.abs(self.voltages - v))
+                t_ticks.append(self.spec_times[idx])
+            
+            ax2.set_xticks(t_ticks)
+            ax2.set_xticklabels([f'{v:.2f}' for v in v_ticks])
+            
+            # Voltage trace subplot
+            ax_volt.plot(self.spec_times, self.voltages, 'r-', linewidth=1.5)
+            ax_volt.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
+            ax_volt.set_ylabel('Voltage (V)', fontsize=12, fontweight='bold')
+            ax_volt.tick_params(labelsize=10)
+            ax_volt.grid(True, alpha=0.3)
+            ax_volt.set_xlim(self.spec_times.min(), self.spec_times.max())
+            
+            plt.tight_layout()
+            plt.savefig(output_dir / f"{self.sample_name}_spectral_heatmap_peak{peak_idx+1}_eV.png", dpi=150)
+            plt.close()
+            
+            print(f"  Saved peak {peak_idx+1} heatmap: {peak_wl_min:.0f}-{peak_wl_max:.0f} nm "
+                  f"({energy_subset.min():.2f}-{energy_subset.max():.2f} eV)")
+        
+        # ========================================
+        # 3. Voltage trace
+        # ========================================
+        print("[debug] Saving voltage trace...")
+        
         fig, ax = plt.subplots(figsize=(10, 4))
         
         ax.plot(self.spec_times, self.voltages, 'r-', linewidth=1.5)
@@ -500,10 +663,13 @@ class Dataset(object):
         plt.savefig(output_dir / f"{self.sample_name}_voltage_trace.png", dpi=150)
         plt.close()
         
-        # Plot 3: Sample spectra at different times
+        # ========================================
+        # 4. Sample spectra
+        # ========================================
+        print("[debug] Saving sample spectra...")
+        
         fig, ax = plt.subplots(figsize=(10, 6))
         
-        # Plot every 10th spectrum or 5 evenly spaced spectra
         n_plot = min(5, self.spectra.shape[0])
         indices = np.linspace(0, self.spectra.shape[0]-1, n_plot, dtype=int)
         

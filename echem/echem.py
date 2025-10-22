@@ -64,7 +64,7 @@ class EChemAnalyzer:
         self.identify_cycles()
         self.calculate_cycle_averages()
         self.plot_overview()
-        self.plot_cycles()
+        self.plot_peak_separated_heatmaps()
         self.save_spectra_data()
         self.dump_results()
         self.print_summary()
@@ -424,38 +424,134 @@ class EChemAnalyzer:
             baseline_area = areas[0] if len(areas) > 0 else 1.0
             intensity_change = (areas - baseline_area) / baseline_area * 100
         
-        fig, axes = plt.subplots(5, 1, figsize=(10, 12), sharex=True)
+        # ========================================
+        # 피크별 heatmap 생성
+        # ========================================
+        num_peaks = self.args.get('NUM_PEAKS', 1)
+        n_rows = num_peaks + 4
         
-        im = axes[0].imshow(self.dataset.spectra.T, aspect='auto', cmap='hot',
+        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 3 * n_rows))
+        
+        # axes가 1D array인지 확인
+        if n_rows == 1:
+            axes = [axes]
+        
+        # ========================================
+        # 각 피크별 개별 heatmap (eV 단위)
+        # ========================================
+        for peak_idx in range(num_peaks):
+            ax = axes[peak_idx]
+            
+            # 해당 피크의 파장 범위 추정
+            peak_positions = [p.get(f'peaknm{peak_idx+1}', 0) for p in self.fitted_params]
+            peak_positions = [p for p in peak_positions if p > 0]
+            
+            if len(peak_positions) == 0:
+                ax.text(0.5, 0.5, f'Peak {peak_idx+1}: No valid data', 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=14)
+                ax.set_ylabel(f'Peak {peak_idx+1}', fontsize=12, fontweight='bold')
+                continue
+            
+            # 피크 중심값 ± 100 nm 범위
+            center_nm = np.mean(peak_positions)
+            wl_min = center_nm - 100
+            wl_max = center_nm + 100
+            
+            mask = (self.dataset.wavelengths >= wl_min) & (self.dataset.wavelengths <= wl_max)
+            
+            if not np.any(mask):
+                ax.text(0.5, 0.5, f'Peak {peak_idx+1}: Out of range', 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=14)
+                ax.set_ylabel(f'Peak {peak_idx+1}', fontsize=12, fontweight='bold')
+                continue
+            
+            # 해당 범위만 추출
+            wl_subset = self.dataset.wavelengths[mask]
+            spectra_subset = self.dataset.spectra[:, mask]
+            
+            # nm → eV 변환
+            energy_subset = 1239.842 / wl_subset
+            
+            # 에너지 증가 순으로 정렬
+            sort_idx = np.argsort(energy_subset)
+            energy_subset = energy_subset[sort_idx]
+            spectra_subset = spectra_subset[:, sort_idx]
+            
+            # Heatmap 그리기
+            im = ax.imshow(spectra_subset.T, aspect='auto', cmap='hot',
                           extent=[times.min(), times.max(),
-                                 self.dataset.wavelengths.min(), 
-                                 self.dataset.wavelengths.max()],
+                                 energy_subset.min(), energy_subset.max()],
                           origin='lower')
-        axes[0].set_ylabel('Wavelength (nm)', fontsize=12, fontweight='bold')
-        axes[0].set_title(f'{self.dataset.sample_name} - EChem Analysis', fontsize=14)
-        cbar1 = plt.colorbar(im, ax=axes[0])
-        cbar1.set_label('Intensity (a.u.)', fontsize=10)
+            
+            # ========================================
+            # Colorbar를 상단에 배치
+            # ========================================
+            cbar = plt.colorbar(im, ax=ax, location='top', pad=0.02, fraction=0.05)
+            cbar.set_label('Intensity (a.u.)', fontsize=10)
+            
+            ax.set_ylabel(f'Peak {peak_idx+1} Energy (eV)', fontsize=12, fontweight='bold')
+            ax.tick_params(labelsize=10)
+            
+            # ========================================
+            # 첫 번째 heatmap에만 voltage를 두 번째 x축으로 추가
+            # ========================================
+            if peak_idx == 0:
+                ax2 = ax.twiny()  # 두 번째 x축 생성
+                ax2.plot(times, voltages, 'r-', linewidth=0, alpha=0)  # 투명 선
+                ax2.set_xlabel('Voltage (V)', fontsize=12, fontweight='bold', color='red')
+                ax2.tick_params(axis='x', labelcolor='red', labelsize=10)
+                ax2.set_xlim(times.min(), times.max())
+                
+                # Voltage 값들을 시간에 매핑해서 tick 위치 결정
+                v_min, v_max = voltages.min(), voltages.max()
+                v_ticks = np.linspace(v_min, v_max, 5)
+                
+                # 각 voltage 값에 해당하는 시간 찾기
+                t_ticks = []
+                for v in v_ticks:
+                    idx = np.argmin(np.abs(voltages - v))
+                    t_ticks.append(times[idx])
+                
+                ax2.set_xticks(t_ticks)
+                ax2.set_xticklabels([f'{v:.2f}' for v in v_ticks])
+            
+            # X축 라벨은 마지막 heatmap에만
+            if peak_idx < num_peaks - 1:
+                ax.set_xticklabels([])
+            else:
+                ax.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
         
-        axes[1].scatter(times, peaks, c='red', s=20, marker='d', linewidth=1.4)
-        axes[1].set_ylabel('Resonance (eV)', fontsize=12, fontweight='bold')
-        axes[1].tick_params(labelsize=10)
-        axes[1].grid(True, alpha=0.3)
+        # ========================================
+        # 나머지 subplot들
+        # ========================================
+        ax_peak = axes[num_peaks]
+        ax_peak.scatter(times, peaks, c='red', s=20, marker='d', linewidth=1.4)
+        ax_peak.set_ylabel('Resonance (eV)', fontsize=12, fontweight='bold')
+        ax_peak.tick_params(labelsize=10)
+        ax_peak.grid(True, alpha=0.3)
         
-        axes[2].scatter(times, fwhms, c='red', s=17, marker='d', linewidth=1.4)
-        axes[2].set_ylabel('FWHM (eV)', fontsize=12, fontweight='bold')
-        axes[2].tick_params(labelsize=10)
-        axes[2].grid(True, alpha=0.3)
+        ax_fwhm = axes[num_peaks + 1]
+        ax_fwhm.scatter(times, fwhms, c='red', s=17, marker='d', linewidth=1.4)
+        ax_fwhm.set_ylabel('FWHM (eV)', fontsize=12, fontweight='bold')
+        ax_fwhm.tick_params(labelsize=10)
+        ax_fwhm.grid(True, alpha=0.3)
         
-        axes[3].scatter(times, intensity_change, c='red', s=20, marker='d', linewidth=1.4)
-        axes[3].set_ylabel('Intensity change (%)', fontsize=12, fontweight='bold')
-        axes[3].tick_params(labelsize=10)
-        axes[3].grid(True, alpha=0.3)
+        ax_int = axes[num_peaks + 2]
+        ax_int.scatter(times, intensity_change, c='red', s=20, marker='d', linewidth=1.4)
+        ax_int.set_ylabel('Intensity change (%)', fontsize=12, fontweight='bold')
+        ax_int.tick_params(labelsize=10)
+        ax_int.grid(True, alpha=0.3)
         
-        axes[4].plot(times, voltages, 'r-', linewidth=1.4)
-        axes[4].set_ylabel('E (V)', fontsize=12, fontweight='bold')
-        axes[4].set_xlabel('Elapsed Time (s)', fontsize=12, fontweight='bold')
-        axes[4].tick_params(labelsize=10)
-        axes[4].grid(True, alpha=0.3)
+        ax_volt = axes[num_peaks + 3]
+        ax_volt.plot(times, voltages, 'r-', linewidth=1.4)
+        ax_volt.set_ylabel('E (V)', fontsize=12, fontweight='bold')
+        ax_volt.set_xlabel('Elapsed Time (s)', fontsize=12, fontweight='bold')
+        ax_volt.tick_params(labelsize=10)
+        ax_volt.grid(True, alpha=0.3)
+        
+        # 전체 타이틀
+        fig.suptitle(f'{self.dataset.sample_name} - EChem Analysis', 
+                    fontsize=16, fontweight='bold')
         
         plt.tight_layout()
         
@@ -464,61 +560,6 @@ class EChemAnalyzer:
         plt.close(fig)
         
         print(f"[info] Saved overview plot: {output_path}")
-    
-    def plot_cycles(self):
-        """Generate cycle-averaged plots with error bars"""
-        if len(self.cycles) == 0:
-            print("[warning] No cycle data available for plotting")
-            return
-        
-        print("\n[Step] Generating cycle-averaged plots...")
-        
-        output_dir = Path(self.args['OUTPUT_DIR'])
-        
-        cycle = self.cycles[0]
-        
-        fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
-        
-        voltage = cycle['voltage_avg']
-        
-        axes[0].errorbar(voltage, cycle['delta_peak_avg'] * 1000,
-                        yerr=cycle['delta_peak_se'] * 1000,
-                        fmt='o-', color='blue', linewidth=2, markersize=6,
-                        capsize=4, capthick=1.5)
-        axes[0].set_ylabel('Δ$E_{Res}$ (meV)', fontsize=12, fontweight='bold')
-        axes[0].grid(True, alpha=0.3)
-        axes[0].tick_params(labelsize=11)
-        axes[0].axhline(0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-        
-        axes[1].errorbar(voltage, cycle['delta_fwhm_avg'] * 1000,
-                        yerr=cycle['delta_fwhm_se'] * 1000,
-                        fmt='o-', color='blue', linewidth=2, markersize=6,
-                        capsize=4, capthick=1.5)
-        axes[1].set_ylabel('ΔΓ (meV)', fontsize=12, fontweight='bold')
-        axes[1].grid(True, alpha=0.3)
-        axes[1].tick_params(labelsize=11)
-        axes[1].axhline(0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-        
-        axes[2].errorbar(voltage, cycle['delta_intensity_avg'],
-                        yerr=cycle['delta_intensity_se'],
-                        fmt='o-', color='blue', linewidth=2, markersize=6,
-                        capsize=4, capthick=1.5)
-        axes[2].set_ylabel('Int. Change (%)', fontsize=12, fontweight='bold')
-        axes[2].set_xlabel('$U$ (V)', fontsize=12, fontweight='bold')
-        axes[2].grid(True, alpha=0.3)
-        axes[2].tick_params(labelsize=11)
-        axes[2].axhline(0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-        
-        fig.suptitle(f'{self.dataset.sample_name} - Cycle-Averaged Parameters (n={cycle["n_cycles"]})', 
-                    fontsize=14, fontweight='bold', y=0.995)
-        
-        plt.tight_layout()
-        
-        output_path = output_dir / f"{self.dataset.sample_name}_cycle_averaged.png"
-        fig.savefig(output_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-        
-        print(f"[info] Saved cycle-averaged plot: {output_path}")
     
     def save_spectra_data(self):
         """Export spectral data and fitted parameters to text files and plots"""
@@ -730,3 +771,59 @@ class EChemAnalyzer:
             print(f"Cycles analyzed: {len(self.cycles)}")
         
         print("="*60)
+
+    def plot_peak_separated_heatmaps(self):
+        """Generate peak-separated spectral heatmaps using fitted parameters"""
+        print("\n[Step] Generating peak-separated heatmaps...")
+        
+        output_dir = self.dataset.echem_output_dir / "debug"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        num_peaks = self.args.get('NUM_PEAKS', 1)
+        n_spectra = len(self.fitted_params)
+        n_wavelengths = len(self.dataset.wavelengths)
+        
+        # Convert wavelength to energy
+        energy = 1239.842 / self.dataset.wavelengths
+        
+        def lorentz_single_peak(x, a, b, c):
+            """Single Lorentzian peak in wavelength space"""
+            return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
+        
+        # For each peak, reconstruct its contribution
+        for peak_idx in range(1, num_peaks + 1):
+            print(f"  Creating heatmap for Peak {peak_idx}...")
+            
+            # Initialize array for this peak's spectra
+            peak_spectra = np.zeros((n_spectra, n_wavelengths))
+            
+            # Reconstruct each spectrum using only this peak's parameters
+            for i, param in enumerate(self.fitted_params):
+                a = param['params'].get(f'a{peak_idx}', 0)
+                b = param['params'].get(f'b{peak_idx}', 0)
+                c = param['params'].get(f'c{peak_idx}', 0)
+                
+                if b > 0:  # Valid peak
+                    peak_spectra[i, :] = lorentz_single_peak(self.dataset.wavelengths, a, b, c)
+            
+            # Plot time-based heatmap for this peak
+            fig, ax = plt.subplots(figsize=(12, 6))
+            
+            times = np.array([p['time'] for p in self.fitted_params])
+            
+            im = ax.imshow(peak_spectra.T[::-1, :], aspect='auto', cmap='hot',
+                          extent=[times.min(), times.max(),
+                                 energy.min(), energy.max()],
+                          origin='lower')
+            
+            ax.set_xlabel('Time (s)', fontsize=12)
+            ax.set_ylabel('Energy (eV)', fontsize=12)
+            ax.set_title(f'{self.dataset.sample_name} - Peak {peak_idx} Component', fontsize=14)
+            
+            plt.colorbar(im, ax=ax, label=f'Peak {peak_idx} Intensity (a.u.)')
+            plt.tight_layout()
+            plt.savefig(output_dir / f"{self.dataset.sample_name}_heatmap_peak{peak_idx}.png", 
+                       dpi=150)
+            plt.close()
+        
+        print(f"[info] Saved {num_peaks} peak-separated heatmaps")
