@@ -63,7 +63,6 @@ class EChemAnalyzer:
         self.fit_all_spectra()
         self.identify_cycles()
         self.calculate_cycle_averages()
-        self.plot_overview()
         self.plot_peak_separated_heatmaps()
         self.save_spectra_data()
         self.dump_results()
@@ -404,163 +403,6 @@ class EChemAnalyzer:
         
         print(f"[info] Calculated averages over {n_cycles} cycles")
     
-    def plot_overview(self):
-        """Generate overview plot showing all time-series data"""
-        print("\n[Step] Generating overview plot...")
-        
-        output_dir = self.dataset.echem_output_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        times = np.array([p['time'] for p in self.fitted_params])
-        voltages = np.array([p['voltage'] for p in self.fitted_params])
-        peaks = np.array([p['peakeV1'] for p in self.fitted_params])
-        fwhms = np.array([p['FWHMeV1'] for p in self.fitted_params])
-        areas = np.array([p['area1'] for p in self.fitted_params])
-        
-        if hasattr(self, 'ocp_index') and self.ocp_index < len(areas):
-            baseline_area = areas[self.ocp_index]
-            intensity_change = (areas - baseline_area) / baseline_area * 100
-        else:
-            baseline_area = areas[0] if len(areas) > 0 else 1.0
-            intensity_change = (areas - baseline_area) / baseline_area * 100
-        
-        # ========================================
-        # 피크별 heatmap 생성
-        # ========================================
-        num_peaks = self.args.get('NUM_PEAKS', 1)
-        n_rows = num_peaks + 4
-        
-        fig, axes = plt.subplots(n_rows, 1, figsize=(12, 3 * n_rows))
-        
-        # axes가 1D array인지 확인
-        if n_rows == 1:
-            axes = [axes]
-        
-        # ========================================
-        # 각 피크별 개별 heatmap (eV 단위)
-        # ========================================
-        for peak_idx in range(num_peaks):
-            ax = axes[peak_idx]
-            
-            # 해당 피크의 파장 범위 추정
-            peak_positions = [p.get(f'peaknm{peak_idx+1}', 0) for p in self.fitted_params]
-            peak_positions = [p for p in peak_positions if p > 0]
-            
-            if len(peak_positions) == 0:
-                ax.text(0.5, 0.5, f'Peak {peak_idx+1}: No valid data', 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=14)
-                ax.set_ylabel(f'Peak {peak_idx+1}', fontsize=12, fontweight='bold')
-                continue
-            
-            # 피크 중심값 ± 100 nm 범위
-            center_nm = np.mean(peak_positions)
-            wl_min = center_nm - 100
-            wl_max = center_nm + 100
-            
-            mask = (self.dataset.wavelengths >= wl_min) & (self.dataset.wavelengths <= wl_max)
-            
-            if not np.any(mask):
-                ax.text(0.5, 0.5, f'Peak {peak_idx+1}: Out of range', 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=14)
-                ax.set_ylabel(f'Peak {peak_idx+1}', fontsize=12, fontweight='bold')
-                continue
-            
-            # 해당 범위만 추출
-            wl_subset = self.dataset.wavelengths[mask]
-            spectra_subset = self.dataset.spectra[:, mask]
-            
-            # nm → eV 변환
-            energy_subset = 1239.842 / wl_subset
-            
-            # 에너지 증가 순으로 정렬
-            sort_idx = np.argsort(energy_subset)
-            energy_subset = energy_subset[sort_idx]
-            spectra_subset = spectra_subset[:, sort_idx]
-            
-            # Heatmap 그리기
-            im = ax.imshow(spectra_subset.T, aspect='auto', cmap='hot',
-                          extent=[times.min(), times.max(),
-                                 energy_subset.min(), energy_subset.max()],
-                          origin='lower')
-            
-            # ========================================
-            # Colorbar를 상단에 배치
-            # ========================================
-            cbar = plt.colorbar(im, ax=ax, location='top', pad=0.02, fraction=0.05)
-            cbar.set_label('Intensity (a.u.)', fontsize=10)
-            
-            ax.set_ylabel(f'Peak {peak_idx+1} Energy (eV)', fontsize=12, fontweight='bold')
-            ax.tick_params(labelsize=10)
-            
-            # ========================================
-            # 첫 번째 heatmap에만 voltage를 두 번째 x축으로 추가
-            # ========================================
-            if peak_idx == 0:
-                ax2 = ax.twiny()  # 두 번째 x축 생성
-                ax2.plot(times, voltages, 'r-', linewidth=0, alpha=0)  # 투명 선
-                ax2.set_xlabel('Voltage (V)', fontsize=12, fontweight='bold', color='red')
-                ax2.tick_params(axis='x', labelcolor='red', labelsize=10)
-                ax2.set_xlim(times.min(), times.max())
-                
-                # Voltage 값들을 시간에 매핑해서 tick 위치 결정
-                v_min, v_max = voltages.min(), voltages.max()
-                v_ticks = np.linspace(v_min, v_max, 5)
-                
-                # 각 voltage 값에 해당하는 시간 찾기
-                t_ticks = []
-                for v in v_ticks:
-                    idx = np.argmin(np.abs(voltages - v))
-                    t_ticks.append(times[idx])
-                
-                ax2.set_xticks(t_ticks)
-                ax2.set_xticklabels([f'{v:.2f}' for v in v_ticks])
-            
-            # X축 라벨은 마지막 heatmap에만
-            if peak_idx < num_peaks - 1:
-                ax.set_xticklabels([])
-            else:
-                ax.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
-        
-        # ========================================
-        # 나머지 subplot들
-        # ========================================
-        ax_peak = axes[num_peaks]
-        ax_peak.scatter(times, peaks, c='red', s=20, marker='d', linewidth=1.4)
-        ax_peak.set_ylabel('Resonance (eV)', fontsize=12, fontweight='bold')
-        ax_peak.tick_params(labelsize=10)
-        ax_peak.grid(True, alpha=0.3)
-        
-        ax_fwhm = axes[num_peaks + 1]
-        ax_fwhm.scatter(times, fwhms, c='red', s=17, marker='d', linewidth=1.4)
-        ax_fwhm.set_ylabel('FWHM (eV)', fontsize=12, fontweight='bold')
-        ax_fwhm.tick_params(labelsize=10)
-        ax_fwhm.grid(True, alpha=0.3)
-        
-        ax_int = axes[num_peaks + 2]
-        ax_int.scatter(times, intensity_change, c='red', s=20, marker='d', linewidth=1.4)
-        ax_int.set_ylabel('Intensity change (%)', fontsize=12, fontweight='bold')
-        ax_int.tick_params(labelsize=10)
-        ax_int.grid(True, alpha=0.3)
-        
-        ax_volt = axes[num_peaks + 3]
-        ax_volt.plot(times, voltages, 'r-', linewidth=1.4)
-        ax_volt.set_ylabel('E (V)', fontsize=12, fontweight='bold')
-        ax_volt.set_xlabel('Elapsed Time (s)', fontsize=12, fontweight='bold')
-        ax_volt.tick_params(labelsize=10)
-        ax_volt.grid(True, alpha=0.3)
-        
-        # 전체 타이틀
-        fig.suptitle(f'{self.dataset.sample_name} - EChem Analysis', 
-                    fontsize=16, fontweight='bold')
-        
-        plt.tight_layout()
-        
-        output_path = output_dir / f"{self.dataset.sample_name}_overview.png"
-        fig.savefig(output_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-        
-        print(f"[info] Saved overview plot: {output_path}")
-    
     def save_spectra_data(self):
         """Export spectral data and fitted parameters to text files and plots"""
         print("\n[Step] Saving spectral data and plots...")
@@ -773,57 +615,178 @@ class EChemAnalyzer:
         print("="*60)
 
     def plot_peak_separated_heatmaps(self):
-        """Generate peak-separated spectral heatmaps using fitted parameters"""
-        print("\n[Step] Generating peak-separated heatmaps...")
+        """Generate peak-separated spectral heatmaps with fitted parameters"""
+        print("\n[Step] Generating peak-separated heatmaps with parameters...")
         
-        output_dir = self.dataset.echem_output_dir / "debug"
+        output_dir = self.dataset.echem_output_dir  # debug 폴더 대신 echem 폴더에 직접 저장
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        # 데이터 저장용 폴더
+        data_dir = self.dataset.echem_output_dir / "plot_data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        
         num_peaks = self.args.get('NUM_PEAKS', 1)
-        n_spectra = len(self.fitted_params)
-        n_wavelengths = len(self.dataset.wavelengths)
         
-        # Convert wavelength to energy
-        energy = 1239.842 / self.dataset.wavelengths
-        
-        def lorentz_single_peak(x, a, b, c):
-            """Single Lorentzian peak in wavelength space"""
-            return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
-        
-        # For each peak, reconstruct its contribution
-        for peak_idx in range(1, num_peaks + 1):
-            print(f"  Creating heatmap for Peak {peak_idx}...")
+        # ========================================
+        # 각 피크별 heatmap + 파라미터 추적 그래프
+        # ========================================
+        for peak_idx in range(num_peaks):
+            print(f"  Creating heatmap for Peak {peak_idx+1}...")
             
-            # Initialize array for this peak's spectra
-            peak_spectra = np.zeros((n_spectra, n_wavelengths))
+            # ✓ 모든 피크에 대해 full 범위 사용
+            peak_wl_min = self.dataset.wavelengths.min()
+            peak_wl_max = self.dataset.wavelengths.max()
             
-            # Reconstruct each spectrum using only this peak's parameters
+            # 해당 범위 마스크
+            mask = (self.dataset.wavelengths >= peak_wl_min) & (self.dataset.wavelengths <= peak_wl_max)
+            
+            if not np.any(mask):
+                print(f"  Peak {peak_idx+1}: No data in range")
+                continue
+            
+            # 추출 - 전체 스펙트럼
+            wl_subset = self.dataset.wavelengths[mask]
+            spectra_subset = self.dataset.spectra[:, mask]
+            
+            # nm → eV
+            energy_subset = 1239.842 / wl_subset
+            sort_idx_sub = np.argsort(energy_subset)
+            energy_subset = energy_subset[sort_idx_sub]
+            spectra_subset = spectra_subset[:, sort_idx_sub]
+            n_spectra = len(self.fitted_params)
+            n_wavelengths = len(self.dataset.wavelengths)
+            
+            # 피크별 재구성 스펙트럼
+            peak_spectra_reconstructed = np.zeros((n_spectra, n_wavelengths))
+            
+            def lorentz_single_peak(x, a, b, c):
+                """Single Lorentzian peak in wavelength space"""
+                return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
+            
+            # 각 스펙트럼에서 해당 피크만 재구성
             for i, param in enumerate(self.fitted_params):
-                a = param['params'].get(f'a{peak_idx}', 0)
-                b = param['params'].get(f'b{peak_idx}', 0)
-                c = param['params'].get(f'c{peak_idx}', 0)
+                a = param['params'].get(f'a{peak_idx+1}', 0)
+                b = param['params'].get(f'b{peak_idx+1}', 0)
+                c = param['params'].get(f'c{peak_idx+1}', 0)
                 
                 if b > 0:  # Valid peak
-                    peak_spectra[i, :] = lorentz_single_peak(self.dataset.wavelengths, a, b, c)
+                    peak_spectra_reconstructed[i, :] = lorentz_single_peak(self.dataset.wavelengths, a, b, c)
             
-            # Plot time-based heatmap for this peak
-            fig, ax = plt.subplots(figsize=(12, 6))
+            # 재구성된 피크 스펙트럼을 에너지로 변환
+            peak_spectra_ev = peak_spectra_reconstructed[:, sort_idx_sub]
             
-            times = np.array([p['time'] for p in self.fitted_params])
+            # ========================================
+            # Plot: 5개 subplot (순서 변경: heatmap / voltage / resonance / fwhm / intensity)
+            # 높이 동일하게 설정
+            # ========================================
+            fig, axes = plt.subplots(5, 1, figsize=(12, 15),
+                                    gridspec_kw={'height_ratios': [1.5, 0.5, 1, 1, 1]})
             
-            im = ax.imshow(peak_spectra.T[::-1, :], aspect='auto', cmap='hot',
-                          extent=[times.min(), times.max(),
-                                 energy.min(), energy.max()],
-                          origin='lower')
+            # ========== Subplot 1: Heatmap (피크별 재구성) ==========
+            ax_heat = axes[0]
+            im = ax_heat.imshow(peak_spectra_ev.T, aspect='auto', cmap='hot',
+                               extent=[self.dataset.spec_times.min(), self.dataset.spec_times.max(),
+                                      energy_subset.min(), energy_subset.max()],
+                               origin='lower')
             
-            ax.set_xlabel('Time (s)', fontsize=12)
-            ax.set_ylabel('Energy (eV)', fontsize=12)
-            ax.set_title(f'{self.dataset.sample_name} - Peak {peak_idx} Component', fontsize=14)
+            ax_heat.set_ylabel('Energy (eV)', fontsize=12, fontweight='bold')
+            ax_heat.set_title(f'{self.dataset.sample_name} - Peak {peak_idx+1} Component',
+                             fontsize=14, pad=20)
+            ax_heat.tick_params(labelsize=10)
+            ax_heat.set_xticklabels([])
+            ax_heat.set_ylim(energy_subset.min(), energy_subset.max())
             
-            plt.colorbar(im, ax=ax, label=f'Peak {peak_idx} Intensity (a.u.)')
+            # Colorbar 상단
+            cbar = plt.colorbar(im, ax=ax_heat, location='top', pad=0.02, fraction=0.05, shrink=0.3, anchor=(1.0, 0.0))
+            cbar.set_label('Intensity (a.u.)', fontsize=10)
+            
+            # ========== Subplot 2: Voltage trace ==========
+            ax_volt = axes[1]
+            ax_volt.plot(self.dataset.spec_times, self.dataset.voltages, 'r-', linewidth=1.5)
+            ax_volt.set_ylabel('Voltage (V)', fontsize=12, fontweight='bold')
+            ax_volt.tick_params(labelsize=10)
+            ax_volt.grid(True, alpha=0.3)
+            ax_volt.set_xticklabels([])
+            ax_volt.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
+            
+            # ========== Subplot 3: Resonance (Peak Energy) ==========
+            ax_peak = axes[2]
+            peak_key = f'peakeV{peak_idx+1}'
+            resonances = [p.get(peak_key, np.nan) for p in self.fitted_params]
+            times = [p.get('time') for p in self.fitted_params]
+            
+            # NaN 제거
+            valid_mask = ~np.isnan(resonances)
+            times_valid = [t for t, v in zip(times, valid_mask) if v]
+            resonances_valid = [r for r, v in zip(resonances, valid_mask) if v]
+            
+            if len(resonances_valid) > 0:
+                ax_peak.plot(times_valid, resonances_valid, 'b-', linewidth=1.5, marker='o', markersize=3)
+            ax_peak.set_ylabel(f'Peak {peak_idx+1}\nResonance (eV)', fontsize=10, fontweight='bold')
+            ax_peak.tick_params(labelsize=9)
+            ax_peak.grid(True, alpha=0.3)
+            ax_peak.set_xticklabels([])
+            ax_peak.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
+            
+            # ========== Subplot 4: FWHM ==========
+            ax_fwhm = axes[3]
+            fwhm_key = f'FWHMeV{peak_idx+1}'
+            fwhms = [p.get(fwhm_key, np.nan) for p in self.fitted_params]
+            
+            valid_mask = ~np.isnan(fwhms)
+            times_valid = [t for t, v in zip(times, valid_mask) if v]
+            fwhms_valid = [f for f, v in zip(fwhms, valid_mask) if v]
+            
+            if len(fwhms_valid) > 0:
+                ax_fwhm.plot(times_valid, fwhms_valid, 'g-', linewidth=1.5, marker='s', markersize=3)
+            ax_fwhm.set_ylabel(f'Peak {peak_idx+1}\nFWHM (eV)', fontsize=10, fontweight='bold')
+            ax_fwhm.tick_params(labelsize=9)
+            ax_fwhm.grid(True, alpha=0.3)
+            ax_fwhm.set_xticklabels([])
+            ax_fwhm.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
+            
+            # ========== Subplot 5: Intensity Change (%) ==========
+            ax_int = axes[4]
+            area_key = f'area{peak_idx+1}'
+            areas = [p.get(area_key, 0) for p in self.fitted_params]
+            times_all = [p.get('time') for p in self.fitted_params]  # ← 추가
+
+            if len(areas) > 0 and areas[0] > 0:
+                baseline_area = areas[0]
+                intensity_changes = [(a - baseline_area) / baseline_area * 100 for a in areas]
+                ax_int.plot(times_all, intensity_changes, 'm-', linewidth=1.5, marker='^', markersize=3)  # ← times_all 사용
+            ax_int.set_ylabel(f'Peak {peak_idx+1}\nIntensity Δ (%)', fontsize=10, fontweight='bold')
+            ax_int.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
+            ax_int.tick_params(labelsize=9)
+            ax_int.grid(True, alpha=0.3)
+            ax_int.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
+            
             plt.tight_layout()
-            plt.savefig(output_dir / f"{self.dataset.sample_name}_heatmap_peak{peak_idx}.png", 
-                       dpi=150)
+            plt.savefig(output_dir / f"{self.dataset.sample_name}_spectral_heatmap_peak{peak_idx+1}_eV.png", dpi=150)
             plt.close()
+            
+            # ========================================
+            # 데이터 저장
+            # ========================================
+            # 파라미터 데이터 저장
+            param_data = []
+            for i, p in enumerate(self.fitted_params):
+                row = [
+                    p.get('time'),
+                    self.dataset.voltages[i] if i < len(self.dataset.voltages) else np.nan,
+                    p.get(peak_key, np.nan),
+                    p.get(fwhm_key, np.nan),
+                    areas[i] if i < len(areas) else 0
+                ]
+                param_data.append(row)
+            
+            param_data = np.array(param_data)
+            np.savetxt(data_dir / f"{self.dataset.sample_name}_peak{peak_idx+1}_parameters.txt",
+                       param_data,
+                       header=f"Time(s)\tVoltage(V)\tResonance(eV)\tFWHM(eV)\tArea(a.u.)\nPeak_{peak_idx+1}",
+                       delimiter='\t', fmt='%.6f')
+            
+            print(f"  Saved peak {peak_idx+1} heatmap with parameters")
         
-        print(f"[info] Saved {num_peaks} peak-separated heatmaps")
+        print(f"[info] Saved {num_peaks} peak-separated heatmaps with parameters")
+        print(f"[info] Saved plot data to {data_dir}")

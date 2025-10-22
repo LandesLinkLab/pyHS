@@ -78,7 +78,7 @@ args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions durin
                                                  # - Avoid peak swapping in multi-peak fits
 
 # Multi-Attempt Fitting with Intelligent Retry
-args['FIT_MAX_ITERATIONS'] = 10  # Number of iterative refinement cycles
+args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles
                                 # Each iteration tries ALL 6 strategies and keeps the best result:
                                 #   1. Current best parameters (from previous iteration)
                                 #   2. Shift peaks left (-10 nm from current)
@@ -153,7 +153,7 @@ args['FIG_DPI'] = 300  # Resolution (dots per inch) for saved figures
 # Display parameters for detailed cycle plots (reserved for future implementation)
 args['ECHEM_CYCLE_PLOT_START'] = 1    # First cycle to display in detail plots
 args['ECHEM_CYCLE_PLOT_END'] = 4      # Last cycle to display in detail plots
-args['OUTPUT_UNIT'] = 'nm'            # Unit for spectral output: 'nm' (wavelength) or 'eV' (energy)
+args['OUTPUT_UNIT'] = 'eV'            # Unit for spectral output: 'nm' (wavelength) or 'eV' (energy)
                                       # 'nm': Traditional wavelength units (λ in nanometers)
                                       # 'eV': Energy units (E = hc/λ = 1239.842/λ_nm)
 

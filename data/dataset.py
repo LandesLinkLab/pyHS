@@ -466,9 +466,13 @@ class Dataset(object):
         print(f"  Spectra shape: {self.spectra.shape}")
 
     def save_debug_plots_echem(self):
-        """Save EChem debug visualizations"""
-        output_dir = self.echem_output_dir / "debug"
+        """Save EChem visualizations to echem folder"""
+        output_dir = self.echem_output_dir  # debug 폴더 대신 echem 폴더에 직접 저장
         output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 데이터 저장용 폴더 생성
+        data_dir = self.echem_output_dir / "plot_data"
+        data_dir.mkdir(parents=True, exist_ok=True)
         
         num_peaks = self.args.get('NUM_PEAKS', 1)
         
@@ -499,31 +503,11 @@ class Dataset(object):
                           fontsize=14, pad=20)
         ax_heat.tick_params(labelsize=10)
         ax_heat.set_xticklabels([])
-        # ✓ y축 범위를 실제 데이터 범위로 설정
         ax_heat.set_ylim(energy_sorted.min(), energy_sorted.max())
         
         # Colorbar 상단 배치
-        cbar = plt.colorbar(im, ax=ax_heat, location='top', pad=0.02, fraction=0.05)
+        cbar = plt.colorbar(im, ax=ax_heat, location='top', pad=0.02, fraction=0.05, shrink=0.2, anchor=(1.0, 0.0))
         cbar.set_label('Intensity (a.u.)', fontsize=10)
-        
-        # Voltage를 두 번째 x축으로 추가
-        ax2 = ax_heat.twiny()
-        ax2.plot(self.spec_times, self.voltages, 'r-', linewidth=0, alpha=0)
-        ax2.set_xlabel('Voltage (V)', fontsize=12, fontweight='bold', color='red')
-        ax2.tick_params(axis='x', labelcolor='red', labelsize=10)
-        ax2.set_xlim(self.spec_times.min(), self.spec_times.max())
-        
-        # Voltage tick 생성
-        v_min, v_max = self.voltages.min(), self.voltages.max()
-        v_ticks = np.linspace(v_min, v_max, 5)
-        
-        t_ticks = []
-        for v in v_ticks:
-            idx = np.argmin(np.abs(self.voltages - v))
-            t_ticks.append(self.spec_times[idx])
-        
-        ax2.set_xticks(t_ticks)
-        ax2.set_xticklabels([f'{v:.2f}' for v in v_ticks])
         
         # Voltage trace subplot
         ax_volt.plot(self.spec_times, self.voltages, 'r-', linewidth=1.5)
@@ -537,41 +521,21 @@ class Dataset(object):
         plt.savefig(output_dir / f"{self.sample_name}_spectral_heatmap_full_eV.png", dpi=150)
         plt.close()
         
+        # 데이터 저장 (full heatmap)
+        np.savetxt(data_dir / f"{self.sample_name}_spectral_heatmap_full_eV.txt",
+                   np.column_stack([self.spec_times, self.voltages]),
+                   header=f"Time(s)\tVoltage(V)\nEnergy_range: {energy_sorted.min():.4f}-{energy_sorted.max():.4f} eV\nShape: {spectra_sorted.shape}",
+                   delimiter='\t', fmt='%.6f')
+        
         # ========================================
-        # 2. 각 피크별 개별 heatmap (eV 단위) + voltage
+        # 2. 각 피크별 개별 heatmap (eV 단위) + voltage - 기본 버전
         # ========================================
         print(f"[debug] Saving individual peak heatmaps ({num_peaks} peaks)...")
-        
+
         for peak_idx in range(num_peaks):
-            wl_min = self.wavelengths.min()
-            wl_max = self.wavelengths.max()
-            wl_range = wl_max - wl_min
-            
-            # 각 피크에 적절한 범위 할당
-            if num_peaks == 1:
-                peak_wl_min = wl_min
-                peak_wl_max = wl_max
-            elif num_peaks == 2:
-                if peak_idx == 0:
-                    peak_wl_min = wl_min
-                    peak_wl_max = wl_min + wl_range * 0.6
-                else:
-                    peak_wl_min = wl_min + wl_range * 0.4
-                    peak_wl_max = wl_max
-            elif num_peaks == 3:
-                if peak_idx == 0:
-                    peak_wl_min = wl_min
-                    peak_wl_max = wl_min + wl_range * 0.4
-                elif peak_idx == 1:
-                    peak_wl_min = wl_min + wl_range * 0.3
-                    peak_wl_max = wl_min + wl_range * 0.7
-                else:
-                    peak_wl_min = wl_min + wl_range * 0.6
-                    peak_wl_max = wl_max
-            else:
-                segment_size = wl_range / num_peaks
-                peak_wl_min = wl_min + segment_size * peak_idx
-                peak_wl_max = wl_min + segment_size * (peak_idx + 1)
+            # ✓ 모든 피크에 대해 full 범위 사용
+            peak_wl_min = self.wavelengths.min()
+            peak_wl_max = self.wavelengths.max()
             
             # 해당 범위 마스크
             mask = (self.wavelengths >= peak_wl_min) & (self.wavelengths <= peak_wl_max)
@@ -590,7 +554,7 @@ class Dataset(object):
             energy_subset = energy_subset[sort_idx_sub]
             spectra_subset = spectra_subset[:, sort_idx_sub]
             
-            # Plot: 2개 subplot (heatmap + voltage)
+            # Plot: 2개 subplot (heatmap + voltage) - 파라미터는 나중에 추가
             fig, (ax_heat, ax_volt) = plt.subplots(2, 1, figsize=(12, 8),
                                                     gridspec_kw={'height_ratios': [3, 1]})
             
@@ -605,31 +569,11 @@ class Dataset(object):
                              fontsize=14, pad=20)
             ax_heat.tick_params(labelsize=10)
             ax_heat.set_xticklabels([])
-            # ✓ y축 범위를 실제 데이터 범위로 설정
             ax_heat.set_ylim(energy_subset.min(), energy_subset.max())
             
             # Colorbar 상단
-            cbar = plt.colorbar(im, ax=ax_heat, location='top', pad=0.02, fraction=0.05)
+            cbar = plt.colorbar(im, ax=ax_heat, location='top', pad=0.02, fraction=0.05, shrink=0.2, anchor=(1.0, 0.0))
             cbar.set_label('Intensity (a.u.)', fontsize=10)
-            
-            # Voltage를 두 번째 x축으로 추가
-            ax2 = ax_heat.twiny()
-            ax2.plot(self.spec_times, self.voltages, 'r-', linewidth=0, alpha=0)
-            ax2.set_xlabel('Voltage (V)', fontsize=12, fontweight='bold', color='red')
-            ax2.tick_params(axis='x', labelcolor='red', labelsize=10)
-            ax2.set_xlim(self.spec_times.min(), self.spec_times.max())
-            
-            # Voltage tick
-            v_min, v_max = self.voltages.min(), self.voltages.max()
-            v_ticks = np.linspace(v_min, v_max, 5)
-            
-            t_ticks = []
-            for v in v_ticks:
-                idx = np.argmin(np.abs(self.voltages - v))
-                t_ticks.append(self.spec_times[idx])
-            
-            ax2.set_xticks(t_ticks)
-            ax2.set_xticklabels([f'{v:.2f}' for v in v_ticks])
             
             # Voltage trace subplot
             ax_volt.plot(self.spec_times, self.voltages, 'r-', linewidth=1.5)
@@ -640,11 +584,17 @@ class Dataset(object):
             ax_volt.set_xlim(self.spec_times.min(), self.spec_times.max())
             
             plt.tight_layout()
-            plt.savefig(output_dir / f"{self.sample_name}_spectral_heatmap_peak{peak_idx+1}_eV.png", dpi=150)
+            plt.savefig(output_dir / f"{self.sample_name}_spectral_heatmap_peak{peak_idx+1}_eV_basic.png", dpi=150)
             plt.close()
             
-            print(f"  Saved peak {peak_idx+1} heatmap: {peak_wl_min:.0f}-{peak_wl_max:.0f} nm "
-                  f"({energy_subset.min():.2f}-{energy_subset.max():.2f} eV)")
+            # 데이터 저장
+            np.savetxt(data_dir / f"{self.sample_name}_spectral_heatmap_peak{peak_idx+1}_eV_basic.txt",
+                       np.column_stack([self.spec_times, self.voltages]),
+                       header=f"Time(s)\tVoltage(V)\nPeak_{peak_idx+1}\nEnergy_range: {energy_subset.min():.4f}-{energy_subset.max():.4f} eV",
+                       delimiter='\t', fmt='%.6f')
+            
+            print(f"  Saved peak {peak_idx+1} basic heatmap: "
+                  f"{peak_wl_min:.0f}-{peak_wl_max:.0f} nm ({energy_subset.min():.2f}-{energy_subset.max():.2f} eV)")
         
         # ========================================
         # 3. Voltage trace
@@ -662,6 +612,12 @@ class Dataset(object):
         plt.tight_layout()
         plt.savefig(output_dir / f"{self.sample_name}_voltage_trace.png", dpi=150)
         plt.close()
+        
+        # 데이터 저장
+        np.savetxt(data_dir / f"{self.sample_name}_voltage_trace.txt",
+                   np.column_stack([self.spec_times, self.voltages]),
+                   header="Time(s)\tVoltage(V)",
+                   delimiter='\t', fmt='%.6f')
         
         # ========================================
         # 4. Sample spectra
@@ -687,4 +643,13 @@ class Dataset(object):
         plt.savefig(output_dir / f"{self.sample_name}_sample_spectra.png", dpi=150)
         plt.close()
         
-        print(f"[info] Saved debug plots to {output_dir}")
+        # 데이터 저장 (sample spectra)
+        for idx in indices:
+            data = np.column_stack([self.wavelengths, self.spectra[idx, :]])
+            np.savetxt(data_dir / f"{self.sample_name}_sample_spectrum_t{self.spec_times[idx]:.1f}s.txt",
+                       data,
+                       header=f"Wavelength(nm)\tIntensity\nTime: {self.spec_times[idx]:.1f}s, Voltage: {self.voltages[idx]:.2f}V",
+                       delimiter='\t', fmt='%.6f')
+        
+        print(f"[info] Saved plots to {output_dir}")
+        print(f"[info] Saved plot data to {data_dir}")
