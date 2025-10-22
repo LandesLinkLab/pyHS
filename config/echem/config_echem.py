@@ -78,37 +78,24 @@ args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions durin
                                                  # - Avoid peak swapping in multi-peak fits
 
 # Multi-Attempt Fitting with Intelligent Retry
-args['FIT_MAX_ITERATIONS'] = 3  # Number of fitting iterations
-                                # Each iteration tries ALL strategies and keeps the best:
+args['FIT_MAX_ITERATIONS'] = 3  # Number of iterative refinement cycles
+                                # Each iteration tries ALL 6 strategies and keeps the best result:
                                 #   1. Current best parameters (from previous iteration)
-                                #   2. Shift peaks left (-10 nm)
-                                #   3. Shift peaks right (+10 nm)
-                                #   4. Narrow FWHM (60% of current)
-                                #   5. Widen FWHM (150% of current)
-                                #   6. Random exploration
+                                #   2. Shift peaks left (-10 nm from current)
+                                #   3. Shift peaks right (+10 nm from current)
+                                #   4. Narrow FWHM (60% of current width)
+                                #   5. Widen FWHM (150% of current width)
+                                #   6. Random exploration (stochastic perturbation)
                                 #
-                                # The best result from each iteration becomes the starting
-                                # point for the next iteration, progressively improving R².
+                                # The best result from iteration N becomes the starting point
+                                # for iteration N+1, progressively improving R² (gradient-descent-like).
                                 #
                                 # Recommended values:
-                                #   1: Single iteration (6 strategy attempts)
-                                #   3: Multiple refinements (18 total attempts)
-                                #   5: Thorough optimization (30 total attempts)
+                                #   1: Single iteration, 6 strategy attempts (fast)
+                                #   3: Three iterations, 18 total attempts (balanced)
+                                #   5: Five iterations, 30 total attempts (thorough)
                                 #
                                 # Returns: Best parameters from final iteration
-
-args['FIT_RETRY_STRATEGY'] = 'broaden_bounds'  # Retry strategy (DEPRECATED - now auto-selected by attempt number)
-                                                # This parameter is no longer actively used
-                                                # The algorithm automatically selects strategies in optimal order
-                                                # Keep for backward compatibility
-
-args['FIT_RETRY_FACTOR'] = 1.5  # Multiplicative factor for strategy adjustments
-                                # Used by 'broaden_bounds' strategy to expand parameter ranges
-                                # Example: 1.5 → bounds expanded by 50% on each retry
-                                # Recommended range: 1.2 - 2.0
-                                #   1.2: Conservative (small adjustments)
-                                #   1.5: Balanced (default)
-                                #   2.0: Aggressive (large adjustments)
 
 # ============================================================================
 # ELECTROCHEMICAL REFERENCE PARAMETERS

@@ -161,7 +161,42 @@ def fit_n_lorentz(args: Dict[str, Any],
                   num_peaks: int,
                   manual_positions: Optional[List[float]] = None) -> Tuple[np.ndarray, Dict[str, float], float]:
     """
-    Fit N Lorentzian peaks to spectrum with retry capability
+    Fit N Lorentzian peaks with iterative strategy exploration
+    
+    New features:
+    1. Peak position constraints via PEAK_POSITION_TOLERANCE
+    2. Iterative optimization via FIT_MAX_ITERATIONS
+    3. Multiple strategy exploration per iteration
+    4. Progressive parameter refinement (gradient-descent-like)
+    
+    Algorithm:
+    - Each iteration tries all strategies (current_best, shift_left, shift_right, narrow, widen, random)
+    - Best result from iteration N becomes starting point for iteration N+1
+    - Returns best parameters from final iteration
+    
+    Parameters:
+    -----------
+    args : Dict[str, Any]
+        Config dict with:
+        - NUM_PEAKS: Number of peaks to fit
+        - PEAK_INITIAL_GUESS: 'auto' or manual wavelengths (nm)
+        - PEAK_POSITION_TOLERANCE: None, float, or list (nm range)
+        - FIT_MAX_ITERATIONS: Number of iterative refinement cycles
+    y : np.ndarray
+        Spectrum intensity data
+    x : np.ndarray
+        Wavelength array (nm)
+    num_peaks : int
+        Number of peaks to fit
+    manual_positions : Optional[List[float]]
+        Manual peak positions in nm
+    
+    Returns:
+    --------
+    Tuple[np.ndarray, Dict[str, float], float]
+        - Fitted curve over full wavelength range
+        - Parameter dict: {a1, b1, c1, a2, b2, c2, ...}
+        - R-squared goodness of fit (best from all iterations)
     """
     
     # 1. Get fitting range
@@ -170,7 +205,7 @@ def fit_n_lorentz(args: Dict[str, Any],
     x_fit = x[mask]
     y_fit = y[mask]
     
-    # 2. Define N-peak Lorentzian function (before validation)
+    # 2. Define N-peak Lorentzian function
     def lorentz_n(x_val, *params):
         """Sum of N Lorentzian functions"""
         result = np.zeros_like(x_val, dtype=float)
@@ -216,21 +251,16 @@ def fit_n_lorentz(args: Dict[str, Any],
     
     # 5. Generate initial guess
     p0 = generate_initial_guess(y_fit, x_fit, num_peaks, manual_positions)
-    
-    # Store original values for retry
     p0_original = p0.copy()
     
-    # Peak position tolerance setup
+    # 6. Setup tolerance and bounds
     peak_tolerance = args.get('PEAK_POSITION_TOLERANCE', None)
     
-    # Set base bounds
     lower_bounds = [0, x_fit.min(), 0] * num_peaks
     upper_bounds = [np.inf, x_fit.max(), np.inf] * num_peaks
-    
     lower_bounds_original = lower_bounds.copy()
     upper_bounds_original = upper_bounds.copy()
     
-    # Apply peak position constraints if specified
     tolerances = None
     if peak_tolerance is not None:
         if isinstance(peak_tolerance, (list, tuple)):
@@ -257,93 +287,134 @@ def fit_n_lorentz(args: Dict[str, Any],
         lower_bounds_original = lower_bounds.copy()
         upper_bounds_original = upper_bounds.copy()
     
-    # Hybrid Multi-Strategy Retry
-    max_attempts = args.get('FIT_MAX_ATTEMPTS', 1)
+    # 7. Iterative fitting with strategy exploration
+    max_iterations = args.get('FIT_MAX_ITERATIONS', 1)
     
-    best_result = None
-    best_r2 = -np.inf
+    # Strategy list (all strategies tried each iteration)
+    strategies = ['current_best', 'shift_peaks_left', 'shift_peaks_right', 
+                  'narrow_fwhm', 'widen_fwhm', 'random_explore']
     
-    for attempt in range(max_attempts):
-        # STRATEGY SELECTION: Choose strategy based on attempt number
-        strategy = select_retry_strategy(attempt, max_attempts)
+    # Track best across all iterations
+    global_best_result = None
+    global_best_r2 = -np.inf
+    global_best_params_array = None
+    
+    # Current iteration's starting point
+    current_p0 = p0.copy()
+    current_lower_bounds = lower_bounds.copy()
+    current_upper_bounds = upper_bounds.copy()
+    
+    for iteration in range(max_iterations):
+        print(f"\n[Iteration {iteration+1}/{max_iterations}]")
         
-        # APPLY STRATEGY: Modify p0 and bounds according to strategy
-        if attempt > 0:  # Skip modification on first attempt
-            p0, lower_bounds, upper_bounds = apply_retry_strategy(
-                strategy=strategy,
-                attempt=attempt,
-                p0_original=p0_original,
-                lower_bounds_original=lower_bounds_original,
-                upper_bounds_original=upper_bounds_original,
-                x_fit=x_fit,
-                num_peaks=num_peaks,
-                tolerances=tolerances,
-                retry_factor=1.0
-            )
-            
-            print(f"[debug] Attempt {attempt+1}/{max_attempts}: Using strategy '{strategy}'")
-        else:
-            print(f"[debug] Attempt {attempt+1}/{max_attempts}: Using original guess")
+        iteration_best_result = None
+        iteration_best_r2 = -np.inf
+        iteration_best_params_array = None
         
-        try:
-            # Perform fitting
-            popt, pcov = curve_fit(
-                lorentz_n, 
-                x_fit, 
-                y_fit,
-                p0=p0,
-                bounds=(lower_bounds, upper_bounds),
-                maxfev=10000,
-                method='trf'
-            )
-            
-            # Generate fitted curve over FULL wavelength range
-            y_fit_full = lorentz_n(x, *popt)
-            
-            # Calculate R-squared over fitting range only
-            y_fit_range = lorentz_n(x_fit, *popt)
-            ss_res = np.sum((y_fit - y_fit_range)**2)
-            ss_tot = np.sum((y_fit - y_fit.mean())**2)
-            rsq = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-            
-            # Package parameters
-            params = {}
-            for i in range(num_peaks):
-                peak_num = i + 1
-                params[f'a{peak_num}'] = popt[3*i]
-                params[f'b{peak_num}'] = popt[3*i + 1]
-                params[f'c{peak_num}'] = popt[3*i + 2]
-            
-            if num_peaks == 1:
-                params['a'] = params['a1']
-            
-            # Update best result
-            if rsq > best_r2:
-                best_r2 = rsq
-                best_result = (y_fit_full, params, float(rsq))
-                
-                print(f"[debug]   → R²={rsq:.4f} ✓ (NEW BEST)")
-                for i in range(num_peaks):
-                    peak_num = i + 1
-                    print(f"       Peak {peak_num}: λ={params[f'b{peak_num}']:.1f} nm, "
-                          f"FWHM={params[f'c{peak_num}']:.1f} nm")
-                
-                # Early termination for excellent fits
-                if rsq > 0.98:
-                    print(f"[debug]   → Excellent fit (R² > 0.98), stopping early")
-                    break
+        # Try all strategies in this iteration
+        for strategy_idx, strategy in enumerate(strategies):
+            # Apply strategy to get trial parameters
+            if strategy == 'current_best':
+                # Use current best parameters as-is
+                trial_p0 = current_p0.copy()
+                trial_lower = current_lower_bounds.copy()
+                trial_upper = current_upper_bounds.copy()
+                print(f"  Strategy {strategy_idx+1}/6: {strategy}")
             else:
-                print(f"[debug]   → R²={rsq:.4f} (worse than best: {best_r2:.4f})")
+                # Apply transformation strategy
+                trial_p0, trial_lower, trial_upper = apply_strategy_transform(
+                    strategy=strategy,
+                    p0_current=current_p0,
+                    lower_bounds_original=lower_bounds_original,
+                    upper_bounds_original=upper_bounds_original,
+                    x_fit=x_fit,
+                    num_peaks=num_peaks,
+                    tolerances=tolerances,
+                    iteration=iteration
+                )
+                print(f"  Strategy {strategy_idx+1}/6: {strategy}")
             
-        except Exception as e:
-            print(f"[debug]   → FAILED: {str(e)}")
+            # Perform fitting
+            try:
+                popt, pcov = curve_fit(
+                    lorentz_n, 
+                    x_fit, 
+                    y_fit,
+                    p0=trial_p0,
+                    bounds=(trial_lower, trial_upper),
+                    maxfev=10000,
+                    method='trf'
+                )
+                
+                # Generate fitted curve
+                y_fit_full = lorentz_n(x, *popt)
+                y_fit_range = lorentz_n(x_fit, *popt)
+                
+                # Calculate R²
+                ss_res = np.sum((y_fit - y_fit_range)**2)
+                ss_tot = np.sum((y_fit - y_fit.mean())**2)
+                rsq = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+                
+                # Update iteration best
+                if rsq > iteration_best_r2:
+                    iteration_best_r2 = rsq
+                    iteration_best_params_array = popt.copy()
+                    
+                    # Package parameters
+                    params = {}
+                    for i in range(num_peaks):
+                        peak_num = i + 1
+                        params[f'a{peak_num}'] = popt[3*i]
+                        params[f'b{peak_num}'] = popt[3*i + 1]
+                        params[f'c{peak_num}'] = popt[3*i + 2]
+                    if num_peaks == 1:
+                        params['a'] = params['a1']
+                    
+                    iteration_best_result = (y_fit_full, params, float(rsq))
+                    
+                    print(f"    → R²={rsq:.4f} ✓ (NEW ITERATION BEST)")
+                    for i in range(num_peaks):
+                        peak_num = i + 1
+                        print(f"       Peak {peak_num}: λ={params[f'b{peak_num}']:.1f} nm, "
+                              f"FWHM={params[f'c{peak_num}']:.1f} nm")
+                else:
+                    print(f"    → R²={rsq:.4f}")
+                
+            except Exception as e:
+                print(f"    → FAILED: {str(e)}")
+        
+        # Update global best if this iteration improved
+        if iteration_best_r2 > global_best_r2:
+            global_best_r2 = iteration_best_r2
+            global_best_result = iteration_best_result
+            global_best_params_array = iteration_best_params_array
+            print(f"  → Iteration {iteration+1} best: R²={iteration_best_r2:.4f} ✓ (GLOBAL BEST)")
+        else:
+            print(f"  → Iteration {iteration+1} best: R²={iteration_best_r2:.4f} (no global improvement)")
+        
+        # Prepare for next iteration: use best parameters as starting point
+        if iteration_best_params_array is not None:
+            current_p0 = iteration_best_params_array.copy()
+            
+            # Update bounds based on new peak positions (if tolerance is set)
+            if tolerances is not None:
+                for i in range(num_peaks):
+                    b_new = current_p0[3*i + 1]
+                    tol = tolerances[i]
+                    current_lower_bounds[3*i + 1] = max(x_fit.min(), b_new - tol)
+                    current_upper_bounds[3*i + 1] = min(x_fit.max(), b_new + tol)
+        
+        # Early termination if excellent fit
+        if global_best_r2 > 0.99:
+            print(f"\n[Early termination] Excellent fit achieved (R² > 0.99)")
+            break
     
-    # Return best result
-    if best_result is not None:
-        print(f"[debug] Final best result: R²={best_r2:.4f} after {attempt+1} attempts")
-        return best_result
+    # Return best result from all iterations
+    if global_best_result is not None:
+        print(f"\n[Final Result] Best R²={global_best_r2:.4f} from {iteration+1} iteration(s)")
+        return global_best_result
     else:
-        print(f"[warning] All {max_attempts} fitting attempts failed")
+        print(f"[warning] All fitting attempts failed across {max_iterations} iteration(s)")
         params = {}
         for i in range(num_peaks):
             peak_num = i + 1
@@ -354,64 +425,53 @@ def fit_n_lorentz(args: Dict[str, Any],
             params['a'] = 0
             params['b1'] = 0
             params['c1'] = 0
-        
         return np.zeros_like(y), params, 0.0
 
 
-def select_retry_strategy(attempt: int, max_attempts: int) -> str:
+def apply_strategy_transform(strategy: str,
+                             p0_current: List[float],
+                             lower_bounds_original: List[float],
+                             upper_bounds_original: List[float],
+                             x_fit: np.ndarray,
+                             num_peaks: int,
+                             tolerances: Optional[List[float]],
+                             iteration: int) -> Tuple[List[float], List[float], List[float]]:
     """
-    Select retry strategy based on attempt number
+    Apply strategy transformation to current parameters
     
-    Strategy progression (optimized for fitting success):
-    - Attempt 1: original (baseline)
-    - Attempt 2: shift_peaks_left (systematic peak shift)
-    - Attempt 3: shift_peaks_right (opposite direction)
-    - Attempt 4: narrow_fwhm (try narrower peaks)
-    - Attempt 5: widen_fwhm (try broader peaks)
-    - Attempt 6+: random_explore (last resort)
-    """
-    if attempt == 0:
-        return 'original'
-    elif attempt == 1:
-        return 'shift_peaks_left'
-    elif attempt == 2:
-        return 'shift_peaks_right'
-    elif attempt == 3:
-        return 'narrow_fwhm'
-    elif attempt == 4:
-        return 'widen_fwhm'
-    else:
-        return 'random_explore'
-
-
-def apply_retry_strategy(strategy: str,
-                        attempt: int,
-                        p0_original: List[float],
-                        lower_bounds_original: List[float],
-                        upper_bounds_original: List[float],
-                        x_fit: np.ndarray,
-                        num_peaks: int,
-                        tolerances: Optional[List[float]],
-                        retry_factor: float) -> Tuple[List[float], List[float], List[float]]:
-    """
-    Apply retry strategy to modify initial guess and bounds
+    Parameters:
+    -----------
+    strategy : str
+        Strategy name ('shift_peaks_left', 'shift_peaks_right', 'narrow_fwhm', 'widen_fwhm', 'random_explore')
+    p0_current : List[float]
+        Current best parameters from previous strategy/iteration [a1, b1, c1, a2, b2, c2, ...]
+    lower_bounds_original : List[float]
+        Original lower bounds
+    upper_bounds_original : List[float]
+        Original upper bounds
+    x_fit : np.ndarray
+        Wavelength array in fitting range
+    num_peaks : int
+        Number of peaks
+    tolerances : Optional[List[float]]
+        Peak position tolerances (None if unconstrained)
+    iteration : int
+        Current iteration number (for reproducible randomness)
     
-    Note: retry_factor parameter is kept for backward compatibility but not used
+    Returns:
+    --------
+    Tuple[List[float], List[float], List[float]]
+        (trial_p0, trial_lower_bounds, trial_upper_bounds)
     """
-    p0 = p0_original.copy()
+    p0 = p0_current.copy()
     lower_bounds = lower_bounds_original.copy()
     upper_bounds = upper_bounds_original.copy()
     
-    if strategy == 'original':
-        # No modification
-        return p0, lower_bounds, upper_bounds
-    
-    elif strategy == 'shift_peaks_left':
-        # Shift all peaks toward shorter wavelengths
+    if strategy == 'shift_peaks_left':
         shift_amount = 10  # nm
         for i in range(num_peaks):
-            b_original = p0_original[3*i + 1]
-            b_new = b_original - shift_amount
+            b_current = p0_current[3*i + 1]
+            b_new = b_current - shift_amount
             
             # Ensure within bounds
             if tolerances is not None:
@@ -420,15 +480,12 @@ def apply_retry_strategy(strategy: str,
                 b_new = max(x_fit.min(), min(x_fit.max(), b_new))
             
             p0[3*i + 1] = b_new
-        
-        print(f"       Strategy: Shifted peaks -{shift_amount} nm")
     
     elif strategy == 'shift_peaks_right':
-        # Shift all peaks toward longer wavelengths
         shift_amount = 10  # nm
         for i in range(num_peaks):
-            b_original = p0_original[3*i + 1]
-            b_new = b_original + shift_amount
+            b_current = p0_current[3*i + 1]
+            b_new = b_current + shift_amount
             
             # Ensure within bounds
             if tolerances is not None:
@@ -437,44 +494,36 @@ def apply_retry_strategy(strategy: str,
                 b_new = max(x_fit.min(), min(x_fit.max(), b_new))
             
             p0[3*i + 1] = b_new
-        
-        print(f"       Strategy: Shifted peaks +{shift_amount} nm")
     
     elif strategy == 'narrow_fwhm':
-        # Try narrower peaks (better for sharp resonances)
+        # Try narrower peaks (60% of current FWHM)
         for i in range(num_peaks):
-            c_original = p0_original[3*i + 2]
-            p0[3*i + 2] = c_original * 0.6  # 60% of original FWHM
-        
-        print(f"       Strategy: Narrowed FWHM to 60% of original")
+            c_current = p0_current[3*i + 2]
+            p0[3*i + 2] = c_current * 0.6
     
     elif strategy == 'widen_fwhm':
-        # Try broader peaks (better for damped resonances)
+        # Try broader peaks (150% of current FWHM)
         for i in range(num_peaks):
-            c_original = p0_original[3*i + 2]
-            p0[3*i + 2] = c_original * 1.5  # 150% of original FWHM
-        
-        print(f"       Strategy: Widened FWHM to 150% of original")
+            c_current = p0_current[3*i + 2]
+            p0[3*i + 2] = c_current * 1.5
     
     elif strategy == 'random_explore':
-        # Random perturbation as last resort
-        np.random.seed(attempt)  # Reproducible randomness
+        # Random perturbation (reproducible per iteration)
+        np.random.seed(iteration * 100 + 42)
         
         for i in range(num_peaks):
             # Random factors
             amp_factor = 0.5 + np.random.rand() * 1.0  # 0.5 ~ 1.5
             fwhm_factor = 0.7 + np.random.rand() * 0.6  # 0.7 ~ 1.3
             
-            p0[3*i] = p0_original[3*i] * amp_factor
-            p0[3*i + 2] = p0_original[3*i + 2] * fwhm_factor
+            p0[3*i] = p0_current[3*i] * amp_factor
+            p0[3*i + 2] = p0_current[3*i + 2] * fwhm_factor
             
             # Position: small random shift
             if tolerances is not None:
                 shift = (np.random.rand() - 0.5) * tolerances[i] * 0.3
-                b_new = p0_original[3*i + 1] + shift
+                b_new = p0_current[3*i + 1] + shift
                 p0[3*i + 1] = max(lower_bounds[3*i + 1], min(upper_bounds[3*i + 1], b_new))
-        
-        print(f"       Strategy: Random exploration (seed={attempt})")
     
     return p0, lower_bounds, upper_bounds
 
