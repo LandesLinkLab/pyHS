@@ -97,6 +97,10 @@ class SpectrumAnalyzer:
         max_width = self.args.get("MAX_WIDTH_NM", 59)  # Maximum allowed FWHM
         min_r2 = self.args.get("RSQ_MIN", 0.9)         # Minimum R-squared
 
+        # Fit spectrum based on selected model
+        fitting_model = self.args.get('FITTING_MODEL')
+        print(f"[info] Using fitting model: {fitting_model}")
+
         # Statistics tracking
         stats = {'total_clusters': len(self.dataset.clusters),
                 'rejected_width': 0,
@@ -133,11 +137,17 @@ class SpectrumAnalyzer:
             if pixel_count == 0 or integrated_spectrum.max() < 0.01:
                 continue
             
-            # Fit Lorentzian function to integrated spectrum
-            y_fit, params, r2 = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
+            if fitting_model == 'fano':
 
-            # Extract fitted FWHM for quality filtering
-            fitted_width = params.get('c1', 0) # FWHM parameter
+                y_fit, params, r2 = su.fit_fano(self.args, integrated_spectrum, self.dataset.wvl)
+                fitted_width = params.get('bright1_gamma')
+
+            elif fitting_model == 'lorentzian':
+
+                y_fit, params, r2 = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
+                fitted_width = params.get('c1', 0) # FWHM parameter
+
+            else: raise ValueError("[error] Wrong fitting model")
 
             # Quality Filter 1: FWHM limit
             if fitted_width > max_width:
@@ -440,8 +450,21 @@ class SpectrumAnalyzer:
         print("DFS ANALYSIS SUMMARY")
         print("="*60)
         print(f"Sample: {self.dataset.sample_name}")
-        print(f"Fitting mode: {self.args.get('NUM_PEAKS', 1)} peak(s)")
-        
+
+        fitting_model = self.args.get('FITTING_MODEL')
+        print(f"Fitting model: {fitting_model}")
+
+        if fitting_model == 'fano':
+            num_bright = self.args.get('NUM_BRIGHT_MODES', 0)
+            num_dark = self.args.get('NUM_DARK_MODES', 0)
+            print(f"  Bright modes: {num_bright}")
+            print(f"  Dark modes: {num_dark}")
+
+        elif fitting_model == 'lorentzian':
+            print(f"Fitting mode: {self.args.get('NUM_PEAKS', 1)} peak(s)")
+
+        else: raise ValueError("[error] Wrong fitting model")
+  
         peak_guess = self.args.get('PEAK_INITIAL_GUESS', 'auto')
         if peak_guess != 'auto':
             print(f"Initial guess: {peak_guess} nm")

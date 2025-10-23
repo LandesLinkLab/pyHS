@@ -76,6 +76,9 @@ class EChemAnalyzer:
         instead of spatial pixels.
         """
         print("\n[Step] Fitting Lorentzian to all time-point spectra...")
+
+        fitting_model = self.args.get('FITTING_MODEL')
+        print(f"[info] Using fitting model: {fitting_model}")
         
         n_spectra = self.dataset.spectra.shape[0]
         wavelengths = self.dataset.wavelengths
@@ -109,13 +112,23 @@ class EChemAnalyzer:
                     'r2': 0
                 })
                 continue
-            
-            # ✓ 수정: wavelength 단위로 fitting (기존 방식 유지)
-            y_fit, params, r2 = su.fit_lorentz(self.args, spectrum, wavelengths)
-            
-            # ✓ 수정: nm 단위로 나온 FWHM을 eV로 변환해서 필터링
-            fwhm_nm = params.get('c1', 0)
-            peak_nm = params.get('b1', 0)
+
+            if fitting_model == 'fano':
+
+                y_fit, params, r2 = su.fit_fano(self.args, spectrum, wavelengths)
+
+                fwhm_nm = params.get('bright1_gamma', 0)
+                peak_nm = params.get('bright1_lambda', 0)
+
+            elif fitting_model == 'lorentzian':
+                
+                y_fit, params, r2 = su.fit_lorentz(self.args, spectrum, wavelengths)
+
+                fwhm_nm = params.get('c1', 0)
+                peak_nm = params.get('b1', 0)
+
+            else: raise ValueError("[error] Wrong fitting model")
+
             
             # nm → eV 변환
             if peak_nm > 0 and fwhm_nm > 0:
@@ -548,7 +561,20 @@ class EChemAnalyzer:
         print("="*60)
         print(f"Sample: {self.dataset.sample_name}")
         print(f"Technique: {self.technique}")
-        print(f"Fitting mode: {self.args.get('NUM_PEAKS', 1)} peak(s)")
+
+        fitting_model = self.args.get('FITTING_MODEL', 'lorentzian')
+        print(f"Fitting model: {fitting_model}")
+
+        if fitting_model == 'fano':
+            num_bright = self.args.get('NUM_BRIGHT_MODES', 0)
+            num_dark = self.args.get('NUM_DARK_MODES', 0)
+            print(f"  Bright modes: {num_bright}")
+            print(f"  Dark modes: {num_dark}")
+
+        elif fitting_model == 'lorentzian':
+            print(f"  Lorentzian peaks: {self.args.get('NUM_PEAKS', 1)}")
+
+        else: raise ValueError("[error] Wrong fitting model")
         
         peak_guess = self.args.get('PEAK_INITIAL_GUESS', 'auto')
         if peak_guess != 'auto':

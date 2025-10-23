@@ -1,5 +1,6 @@
 import os
 import sys
+import numpy as np
 from pathlib import Path
 
 # Get user home directory for cross-platform compatibility
@@ -43,11 +44,22 @@ args['ECHEM_TECHNIQUE'] = 'CV'        # Electrochemical technique: 'CV', 'CA', o
                                       # CC: Chronocoulometry (potential steps with charge integration)
 
 # ============================================================================
-# SPECTRAL FITTING PARAMETERS
+# FITTING PARAMETERS - SHARED
 # ============================================================================
-args['FIT_RANGE_NM'] = (500, 1000)    # Wavelength range (nm) for Lorentzian curve fitting
-                                      # Should encompass the full resonance peak for accurate parameter extraction
-                                      # Usually same as CROP_RANGE_NM
+# Lorentzian fitting parameters
+args['FIT_RANGE_NM'] = (500, 850)  # Wavelength range (nm) for Lorentzian curve fitting
+                                    # Should encompass the full resonance peak for accurate parameter extraction
+
+args['FITTING_MODEL'] = 'lorentzian'  # 'lorentzian' or 'fano'
+                                      # 'lorentzian': Traditional multi-peak Lorentzian fitting
+                                      # 'fano': Physical Interference Model (bright + dark modes)
+
+# Multi-Attempt Fitting 
+args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles                                      
+
+# ============================================================================
+# FITTING PARAMETERS - (used when FITTING_MODEL = 'lorentzian')
+# ============================================================================
 
 args['NUM_PEAKS'] = 1  # Number of Lorentzian peaks to fit per spectrum
                        # 1: Single peak (monomers, simple nanoparticles)
@@ -77,25 +89,45 @@ args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions durin
                                                  # - Known approximate peak locations from theory/previous experiments
                                                  # - Avoid peak swapping in multi-peak fits
 
-# Multi-Attempt Fitting with Intelligent Retry
-args['FIT_MAX_ITERATIONS'] = 3  # Number of iterative refinement cycles
-                                # Each iteration tries ALL 6 strategies and keeps the best result:
-                                #   1. Current best parameters (from previous iteration)
-                                #   2. Shift peaks left (-10 nm from current)
-                                #   3. Shift peaks right (+10 nm from current)
-                                #   4. Narrow FWHM (60% of current width)
-                                #   5. Widen FWHM (150% of current width)
-                                #   6. Random exploration (stochastic perturbation)
-                                #
-                                # The best result from iteration N becomes the starting point
-                                # for iteration N+1, progressively improving R² (gradient-descent-like).
-                                #
-                                # Recommended values:
-                                #   1: Single iteration, 6 strategy attempts (fast)
-                                #   3: Three iterations, 18 total attempts (balanced)
-                                #   5: Five iterations, 30 total attempts (thorough)
-                                #
-                                # Returns: Best parameters from final iteration
+# ============================================================================
+# FITTING PARAMETERS - (used when FITTING_MODEL = 'fano')
+# ============================================================================
+# Bright modes (phase = 0 fixed)
+args['NUM_BRIGHT_MODES'] = 2  # Number of bright modes (non-interacting background)
+args['BRIGHT_INITIAL_GUESS'] = [690, 565]  # Wavelengths in nm (REQUIRED, must be a list)
+                                            # Example: [690, 565] for two bright peaks
+args['BRIGHT_POSITION_TOLERANCE'] = [10, 10]  # ±nm constraint for each bright peak
+                                               # Can be a single value or list matching NUM_BRIGHT_MODES
+                                               # Example: 10 → all peaks ±10 nm
+                                               # Example: [10, 20] → first ±10, second ±20
+
+# Dark modes (phase fitted)
+args['NUM_DARK_MODES'] = 1  # Number of dark modes (interacting resonances)
+args['DARK_INITIAL_GUESS'] = [620]  # Wavelengths in nm (REQUIRED, must be a list)
+                                     # Example: [620] for one dark mode at 620 nm
+args['DARK_POSITION_TOLERANCE'] = [10]  # ±nm constraint for each dark peak
+                                         # Can be a single value or list matching NUM_DARK_MODES
+
+# Fano-specific fitting parameters
+args['FANO_PHI_INIT'] = np.pi  # Initial phase for dark modes (radians)
+                               # Default: π (180 degrees)
+                               # Typical range: 0 to 2π
+
+args['FANO_Q_RANGE'] = (-20, 20)  # Amplitude range for both bright (c_i) and dark (d_j) modes
+                                   # Negative values allow for destructive interference
+                                   # Example: (-20, 20) allows strong interference effects
+
+args['FANO_PHI_RANGE'] = (0, 2*np.pi)  # Phase range for dark modes (radians)
+                                        # Full range: (0, 2π) allows all possible phases
+
+args['FANO_GAMMA_RANGE'] = (5, 100)  # Linewidth range in nm for both γ (bright) and Γ (dark)
+                                      # (5, 100): typical range for plasmonic resonances
+                                      # Adjust based on expected resonance widths
+
+# Debug mode
+args['FANO_DEBUG'] = True  # If True, prints detailed fitting information
+                           # Shows Step 1 and Step 2 results with parameters
+                           # Useful for troubleshooting and understanding fitting process
 
 # ============================================================================
 # ELECTROCHEMICAL REFERENCE PARAMETERS
