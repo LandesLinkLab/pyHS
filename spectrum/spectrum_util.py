@@ -538,34 +538,6 @@ def plot_spectrum(wavelengths: np.ndarray,
                   snr: Optional[float] = None,
                   args: Optional[Dict[str, Any]] = None,
                   show_fit: bool = True):
-    """
-    Plot experimental spectrum with fitted curve and components
-    
-    Now supports both Lorentzian and Fano fitting models!
-    
-    Parameters:
-    -----------
-    wavelengths : np.ndarray
-        Wavelength or energy array
-    spectrum : np.ndarray
-        Experimental spectrum
-    fit : np.ndarray
-        Fitted curve
-    title : str
-        Plot title
-    save_path : Path
-        Path to save figure
-    dpi : int
-        Figure resolution
-    params : Dict[str, float]
-        Fitted parameters (contains model-specific keys)
-    snr : float
-        Signal-to-noise ratio
-    args : Dict[str, Any]
-        Configuration dictionary (contains FITTING_MODEL, OUTPUT_UNIT, etc.)
-    show_fit : bool
-        Whether to show fit curve and components
-    """
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
@@ -605,6 +577,32 @@ def plot_spectrum(wavelengths: np.ndarray,
                 
                 print(f"[debug plot] Fano model: {num_bright} bright, {num_dark} dark modes")
                 
+                
+                for i in range(num_bright):
+                    c = params.get(f'bright{i+1}_c', 0)
+                    lam = params.get(f'bright{i+1}_lambda', 0)  # nm 기준
+                    gamma = params.get(f'bright{i+1}_gamma', 0) # nm 기준
+                    if lam > 0 and gamma > 0:
+                        # 1) 계산은 항상 nm에서
+                        x_vals = wavelengths  # nm
+                        A_bright = c * (gamma/2) / (x_vals - lam + 1j*gamma/2)
+                        I_bright = np.abs(A_bright)**2
+
+                        # 2) 플롯 직전에만 단위 변환 + 정렬
+                        label_lam = lam
+                        if output_unit == 'eV':
+                            x_vals = 1239.842 / x_vals
+                            order = np.argsort(x_vals)
+                            x_vals = x_vals[order]
+                            I_bright = I_bright[order]
+                            label_lam = 1239.842 / lam
+                            unit_tag = 'eV'
+                        else:
+                            unit_tag = 'nm'
+
+                        ax.plot(x_vals, I_bright, '--', linewidth=1.5,
+                                label=f'Bright {i+1} ({label_lam:.3f} {unit_tag})', alpha=0.7)
+                
                 # Plot bright modes
                 for i in range(num_bright):
                     c = params.get(f'bright{i+1}_c', 0)
@@ -626,7 +624,7 @@ def plot_spectrum(wavelengths: np.ndarray,
                         
                         ax.plot(wavelengths, I_bright, '--', linewidth=1.5, 
                                label=f'Bright {i+1} ({lam:.1f} nm)', alpha=0.7)
-                
+
                 # Plot dark modes
                 for j in range(num_dark):
                     d = params.get(f'dark{j+1}_d', 0)
