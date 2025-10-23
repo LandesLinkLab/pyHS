@@ -645,14 +645,14 @@ class EChemAnalyzer:
         """Generate peak-separated spectral heatmaps with fitted parameters"""
         print("\n[Step] Generating peak-separated heatmaps with parameters...")
         
-        output_dir = self.dataset.echem_output_dir  # debug 폴더 대신 echem 폴더에 직접 저장
+        output_dir = self.dataset.echem_output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # 데이터 저장용 폴더
         data_dir = self.dataset.echem_output_dir / "plot_data"
         data_dir.mkdir(parents=True, exist_ok=True)
         
         num_peaks = self.args.get('NUM_PEAKS', 1)
+        fitting_model = self.args.get('FITTING_MODEL', 'lorentzian')
         
         # ========================================
         # 각 피크별 heatmap + 파라미터 추적 그래프
@@ -660,56 +660,88 @@ class EChemAnalyzer:
         for peak_idx in range(num_peaks):
             print(f"  Creating heatmap for Peak {peak_idx+1}...")
             
-            # ✓ 모든 피크에 대해 full 범위 사용
             peak_wl_min = self.dataset.wavelengths.min()
             peak_wl_max = self.dataset.wavelengths.max()
             
-            # 해당 범위 마스크
             mask = (self.dataset.wavelengths >= peak_wl_min) & (self.dataset.wavelengths <= peak_wl_max)
             
             if not np.any(mask):
                 print(f"  Peak {peak_idx+1}: No data in range")
                 continue
             
-            # 추출 - 전체 스펙트럼
             wl_subset = self.dataset.wavelengths[mask]
-            spectra_subset = self.dataset.spectra[:, mask]
             
             # nm → eV
             energy_subset = 1239.842 / wl_subset
             sort_idx_sub = np.argsort(energy_subset)
             energy_subset = energy_subset[sort_idx_sub]
-            spectra_subset = spectra_subset[:, sort_idx_sub]
+            
             n_spectra = len(self.fitted_params)
             n_wavelengths = len(self.dataset.wavelengths)
             
             # 피크별 재구성 스펙트럼
             peak_spectra_reconstructed = np.zeros((n_spectra, n_wavelengths))
             
-            def lorentz_single_peak(x, a, b, c):
-                """Single Lorentzian peak in wavelength space"""
-                return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
-            
-            # 각 스펙트럼에서 해당 피크만 재구성
-            for i, param in enumerate(self.fitted_params):
-                a = param['params'].get(f'a{peak_idx+1}', 0)
-                b = param['params'].get(f'b{peak_idx+1}', 0)
-                c = param['params'].get(f'c{peak_idx+1}', 0)
+            # ✅✅✅ 수정: 피팅 모델에 따라 다른 재구성 함수 사용
+            if fitting_model == 'lorentzian':
+                # Lorentzian 모델 재구성
+                def lorentz_single_peak(x, a, b, c):
+                    """Single Lorentzian peak in wavelength space"""
+                    return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
                 
-                if b > 0:  # Valid peak
-                    peak_spectra_reconstructed[i, :] = lorentz_single_peak(self.dataset.wavelengths, a, b, c)
+                for i, param in enumerate(self.fitted_params):
+                    a = param['params'].get(f'a{peak_idx+1}', 0)
+                    b = param['params'].get(f'b{peak_idx+1}', 0)
+                    c = param['params'].get(f'c{peak_idx+1}', 0)
+                    
+                    if b > 0:  # Valid peak
+                        peak_spectra_reconstructed[i, :] = lorentz_single_peak(self.dataset.wavelengths, a, b, c)
             
-            # 재구성된 피크 스펙트럼을 에너지로 변환
-            peak_spectra_ev = peak_spectra_reconstructed[:, sort_idx_sub]
+            elif fitting_model == 'fano':
+                # Fano 모델 재구성 - Bright mode만
+                def fano_single_bright(x, c, lam, gamma):
+                    """Single Fano bright mode in wavelength space"""
+                    A = c * (gamma/2) / (x - lam + 1j*gamma/2)
+                    I = np.abs(A)**2
+                    return I
+                
+                for i, param in enumerate(self.fitted_params):
+                    c = param['params'].get(f'bright{peak_idx+1}_c', 0)
+                    lam = param['params'].get(f'bright{peak_idx+1}_lambda', 0)
+                    gamma = param['params'].get(f'bright{peak_idx+1}_gamma', 0)
+                    
+                    if lam > 0 and gamma > 0:  # Valid bright mode
+                        peak_spectra_reconstructed[i, :] = fano_single_bright(self.dataset.wavelengths, c, lam, gamma)
+            
+            else:
+                raise ValueError(f"Unknown fitting model: {fitting_model}")
+            
+            # ✅ 디버그: 재구성 스펙트럼 강도 확인
+            max_intensity = peak_spectra_reconstructed.max()
+            mean_intensity = peak_spectra_reconstructed.mean()
+            print(f"    Peak {peak_idx+1} reconstructed: max={max_intensity:.6f}, mean={mean_intensity:.6f}")
+            
+            if max_intensity < 1e-8:
+                print(f"    ⚠️ WARNING: Peak {peak_idx+1} has very low intensity!")
+            
+            # 재구성 스펙트럼을 에너지 축으로 올바르게 변환
+            energy_full = 1239.842 / self.dataset.wavelengths
+            sort_idx_full = np.argsort(energy_full)
+            
+            peak_spectra_sorted = peak_spectra_reconstructed[:, sort_idx_full]
+            
+            energy_full_sorted = energy_full[sort_idx_full]
+            mask_subset = (energy_full_sorted >= energy_subset.min()) & (energy_full_sorted <= energy_subset.max())
+            
+            peak_spectra_ev = peak_spectra_sorted[:, mask_subset]
             
             # ========================================
-            # Plot: 5개 subplot (순서 변경: heatmap / voltage / resonance / fwhm / intensity)
-            # 높이 동일하게 설정
+            # Plot: 5개 subplot
             # ========================================
             fig, axes = plt.subplots(5, 1, figsize=(12, 15),
                                     gridspec_kw={'height_ratios': [1.5, 0.5, 1, 1, 1]})
             
-            # ========== Subplot 1: Heatmap (피크별 재구성) ==========
+            # Subplot 1: Heatmap (피크별 재구성)
             ax_heat = axes[0]
             im = ax_heat.imshow(peak_spectra_ev.T, aspect='auto', cmap='hot',
                                extent=[self.dataset.spec_times.min(), self.dataset.spec_times.max(),
@@ -717,17 +749,22 @@ class EChemAnalyzer:
                                origin='lower')
             
             ax_heat.set_ylabel('Energy (eV)', fontsize=12, fontweight='bold')
-            ax_heat.set_title(f'{self.dataset.sample_name} - Peak {peak_idx+1} Component',
+            
+            # ✅ 타이틀에 모델명 추가
+            if fitting_model == 'fano':
+                title_suffix = f'(Bright Mode {peak_idx+1})'
+            else:
+                title_suffix = f'(Peak {peak_idx+1})'
+            ax_heat.set_title(f'{self.dataset.sample_name} - {title_suffix}',
                              fontsize=14, pad=20)
             ax_heat.tick_params(labelsize=10)
             ax_heat.set_xticklabels([])
             ax_heat.set_ylim(energy_subset.min(), energy_subset.max())
             
-            # Colorbar 상단
             cbar = plt.colorbar(im, ax=ax_heat, location='top', pad=0.02, fraction=0.05, shrink=0.3, anchor=(1.0, 0.0))
             cbar.set_label('Intensity (a.u.)', fontsize=10)
             
-            # ========== Subplot 2: Voltage trace ==========
+            # Subplot 2: Voltage trace
             ax_volt = axes[1]
             ax_volt.plot(self.dataset.spec_times, self.dataset.voltages, 'r-', linewidth=1.5)
             ax_volt.set_ylabel('Voltage (V)', fontsize=12, fontweight='bold')
@@ -736,28 +773,44 @@ class EChemAnalyzer:
             ax_volt.set_xticklabels([])
             ax_volt.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
             
-            # ========== Subplot 3: Resonance (Peak Energy) ==========
+            # Subplot 3: Resonance (Peak Energy)
             ax_peak = axes[2]
-            peak_key = f'peakeV{peak_idx+1}'
+            
+            # ✅✅✅ 수정: 모델에 따라 다른 키 사용
+            if fitting_model == 'fano':
+                peak_key = f'brighteV{peak_idx+1}'  # Fano의 경우 bright mode 에너지
+            else:
+                peak_key = f'peakeV{peak_idx+1}'    # Lorentzian의 경우
+            
             resonances = [p.get(peak_key, np.nan) for p in self.fitted_params]
             times = [p.get('time') for p in self.fitted_params]
             
-            # NaN 제거
             valid_mask = ~np.isnan(resonances)
             times_valid = [t for t, v in zip(times, valid_mask) if v]
             resonances_valid = [r for r, v in zip(resonances, valid_mask) if v]
             
             if len(resonances_valid) > 0:
                 ax_peak.plot(times_valid, resonances_valid, 'b-', linewidth=1.5, marker='o', markersize=3)
-            ax_peak.set_ylabel(f'Peak {peak_idx+1}\nResonance (eV)', fontsize=10, fontweight='bold')
+            
+            if fitting_model == 'fano':
+                ylabel = f'Bright {peak_idx+1}\nResonance (eV)'
+            else:
+                ylabel = f'Peak {peak_idx+1}\nResonance (eV)'
+            ax_peak.set_ylabel(ylabel, fontsize=10, fontweight='bold')
             ax_peak.tick_params(labelsize=9)
             ax_peak.grid(True, alpha=0.3)
             ax_peak.set_xticklabels([])
             ax_peak.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
             
-            # ========== Subplot 4: FWHM ==========
+            # Subplot 4: FWHM
             ax_fwhm = axes[3]
-            fwhm_key = f'FWHMeV{peak_idx+1}'
+            
+            # ✅✅✅ 수정: 모델에 따라 다른 키 사용
+            if fitting_model == 'fano':
+                fwhm_key = f'gammaeV{peak_idx+1}'   # Fano의 경우 gamma (linewidth)
+            else:
+                fwhm_key = f'FWHMeV{peak_idx+1}'     # Lorentzian의 경우
+            
             fwhms = [p.get(fwhm_key, np.nan) for p in self.fitted_params]
             
             valid_mask = ~np.isnan(fwhms)
@@ -766,23 +819,41 @@ class EChemAnalyzer:
             
             if len(fwhms_valid) > 0:
                 ax_fwhm.plot(times_valid, fwhms_valid, 'g-', linewidth=1.5, marker='s', markersize=3)
-            ax_fwhm.set_ylabel(f'Peak {peak_idx+1}\nFWHM (eV)', fontsize=10, fontweight='bold')
+            
+            if fitting_model == 'fano':
+                ylabel = f'Bright {peak_idx+1}\nγ (eV)'
+            else:
+                ylabel = f'Peak {peak_idx+1}\nFWHM (eV)'
+            ax_fwhm.set_ylabel(ylabel, fontsize=10, fontweight='bold')
             ax_fwhm.tick_params(labelsize=9)
             ax_fwhm.grid(True, alpha=0.3)
             ax_fwhm.set_xticklabels([])
             ax_fwhm.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
             
-            # ========== Subplot 5: Intensity Change (%) ==========
+            # Subplot 5: Intensity Change (%)
             ax_int = axes[4]
-            area_key = f'area{peak_idx+1}'
+            
+            # ✅✅✅ 수정: 모델에 따라 다른 키 사용
+            if fitting_model == 'fano':
+                # Fano의 경우 c 파라미터 (coupling strength)를 intensity로 사용
+                area_key = f'c{peak_idx+1}'
+            else:
+                # Lorentzian의 경우 area 사용
+                area_key = f'area{peak_idx+1}'
+            
             areas = [p.get(area_key, 0) for p in self.fitted_params]
-            times_all = [p.get('time') for p in self.fitted_params]  # ← 추가
+            times_all = [p.get('time') for p in self.fitted_params]
 
             if len(areas) > 0 and areas[0] > 0:
                 baseline_area = areas[0]
                 intensity_changes = [(a - baseline_area) / baseline_area * 100 for a in areas]
-                ax_int.plot(times_all, intensity_changes, 'm-', linewidth=1.5, marker='^', markersize=3)  # ← times_all 사용
-            ax_int.set_ylabel(f'Peak {peak_idx+1}\nIntensity Δ (%)', fontsize=10, fontweight='bold')
+                ax_int.plot(times_all, intensity_changes, 'm-', linewidth=1.5, marker='^', markersize=3)
+            
+            if fitting_model == 'fano':
+                ylabel = f'Bright {peak_idx+1}\nCoupling Δ (%)'
+            else:
+                ylabel = f'Peak {peak_idx+1}\nIntensity Δ (%)'
+            ax_int.set_ylabel(ylabel, fontsize=10, fontweight='bold')
             ax_int.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
             ax_int.tick_params(labelsize=9)
             ax_int.grid(True, alpha=0.3)
@@ -795,7 +866,6 @@ class EChemAnalyzer:
             # ========================================
             # 데이터 저장
             # ========================================
-            # 파라미터 데이터 저장
             param_data = []
             for i, p in enumerate(self.fitted_params):
                 row = [
@@ -808,9 +878,16 @@ class EChemAnalyzer:
                 param_data.append(row)
             
             param_data = np.array(param_data)
+            
+            # ✅ 헤더도 모델에 따라 다르게
+            if fitting_model == 'fano':
+                header = f"Time(s)\tVoltage(V)\tResonance(eV)\tGamma(eV)\tCoupling(a.u.)\nBright_{peak_idx+1}"
+            else:
+                header = f"Time(s)\tVoltage(V)\tResonance(eV)\tFWHM(eV)\tArea(a.u.)\nPeak_{peak_idx+1}"
+            
             np.savetxt(data_dir / f"{self.dataset.sample_name}_peak{peak_idx+1}_parameters.txt",
                        param_data,
-                       header=f"Time(s)\tVoltage(V)\tResonance(eV)\tFWHM(eV)\tArea(a.u.)\nPeak_{peak_idx+1}",
+                       header=header,
                        delimiter='\t', fmt='%.6f')
             
             print(f"  Saved peak {peak_idx+1} heatmap with parameters")

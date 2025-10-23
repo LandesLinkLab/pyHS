@@ -548,12 +548,28 @@ def plot_spectrum(wavelengths: np.ndarray,
     # Get fitting model
     fitting_model = args.get('FITTING_MODEL', 'lorentzian') if args else 'lorentzian'
     
-    # Plot experimental data
-    ax.plot(wavelengths, spectrum, 'ko', markersize=4, alpha=0.6, label='Experimental')
+    # ✅✅✅ 수정: eV 변환 시 X축 데이터와 Y축 데이터를 정렬해서 변환
+    if output_unit == 'eV':
+        # nm → eV 변환
+        energy = 1239.842 / wavelengths
+        
+        # energy 증가 순서로 정렬
+        sort_idx = np.argsort(energy)
+        x_data = energy[sort_idx]
+        spectrum_sorted = spectrum[sort_idx]
+        fit_sorted = fit[sort_idx] if fit is not None else None
+    else:
+        # nm 단위는 그대로 사용
+        x_data = wavelengths
+        spectrum_sorted = spectrum
+        fit_sorted = fit
     
-    if show_fit and fit is not None:
+    # Plot experimental data
+    ax.plot(x_data, spectrum_sorted, 'ko', markersize=4, alpha=0.6, label='Experimental')
+    
+    if show_fit and fit_sorted is not None:
         # Plot total fit
-        ax.plot(wavelengths, fit, 'b-', linewidth=2, label='Total Fit')
+        ax.plot(x_data, fit_sorted, 'b-', linewidth=2, label='Total Fit')
         
         # =====================================================================
         # NEW: Plot individual components based on fitting model
@@ -577,53 +593,33 @@ def plot_spectrum(wavelengths: np.ndarray,
                 
                 print(f"[debug plot] Fano model: {num_bright} bright, {num_dark} dark modes")
                 
-                
+                # Plot bright modes
                 for i in range(num_bright):
                     c = params.get(f'bright{i+1}_c', 0)
                     lam = params.get(f'bright{i+1}_lambda', 0)  # nm 기준
                     gamma = params.get(f'bright{i+1}_gamma', 0) # nm 기준
+                    
                     if lam > 0 and gamma > 0:
                         # 1) 계산은 항상 nm에서
-                        x_vals = wavelengths  # nm
-                        A_bright = c * (gamma/2) / (x_vals - lam + 1j*gamma/2)
+                        x_vals_nm = wavelengths  # nm
+                        A_bright = c * (gamma/2) / (x_vals_nm - lam + 1j*gamma/2)
                         I_bright = np.abs(A_bright)**2
 
                         # 2) 플롯 직전에만 단위 변환 + 정렬
-                        label_lam = lam
                         if output_unit == 'eV':
-                            x_vals = 1239.842 / x_vals
-                            order = np.argsort(x_vals)
-                            x_vals = x_vals[order]
+                            x_vals_plot = 1239.842 / x_vals_nm
+                            order = np.argsort(x_vals_plot)
+                            x_vals_plot = x_vals_plot[order]
                             I_bright = I_bright[order]
                             label_lam = 1239.842 / lam
                             unit_tag = 'eV'
                         else:
+                            x_vals_plot = x_vals_nm
+                            label_lam = lam
                             unit_tag = 'nm'
 
-                        ax.plot(x_vals, I_bright, '--', linewidth=1.5,
+                        ax.plot(x_vals_plot, I_bright, '--', linewidth=1.5,
                                 label=f'Bright {i+1} ({label_lam:.3f} {unit_tag})', alpha=0.7)
-                
-                # Plot bright modes
-                for i in range(num_bright):
-                    c = params.get(f'bright{i+1}_c', 0)
-                    lam = params.get(f'bright{i+1}_lambda', 0)
-                    gamma = params.get(f'bright{i+1}_gamma', 0)
-                    
-                    if lam > 0 and gamma > 0:
-                        # Convert to output unit
-                        if output_unit == 'eV':
-                            x_vals = wavelengths  # Already in eV
-                            # Reconstruct in wavelength space first
-                            wl_space = 1239.842 / wavelengths
-                            A_bright = c * (gamma/2) / (wl_space - lam + 1j*gamma/2)
-                            I_bright = np.abs(A_bright)**2
-                        else:
-                            x_vals = wavelengths  # In nm
-                            A_bright = c * (gamma/2) / (x_vals - lam + 1j*gamma/2)
-                            I_bright = np.abs(A_bright)**2
-                        
-                        ax.plot(wavelengths, I_bright, '--', linewidth=1.5, 
-                               label=f'Bright {i+1} ({lam:.1f} nm)', alpha=0.7)
 
                 # Plot dark modes
                 for j in range(num_dark):
@@ -633,20 +629,26 @@ def plot_spectrum(wavelengths: np.ndarray,
                     theta = params.get(f'dark{j+1}_theta', 0)
                     
                     if lam > 0 and Gamma > 0:
-                        # Convert to output unit
-                        if output_unit == 'eV':
-                            x_vals = wavelengths  # Already in eV
-                            # Reconstruct in wavelength space first
-                            wl_space = 1239.842 / wavelengths
-                            A_dark = d * np.exp(1j * theta) * (Gamma/2) / (wl_space - lam + 1j*Gamma/2)
-                            I_dark = np.abs(A_dark)**2
-                        else:
-                            x_vals = wavelengths  # In nm
-                            A_dark = d * np.exp(1j * theta) * (Gamma/2) / (x_vals - lam + 1j*Gamma/2)
-                            I_dark = np.abs(A_dark)**2
+                        # 1) 계산은 항상 nm에서
+                        x_vals_nm = wavelengths  # nm
+                        A_dark = d * np.exp(1j * theta) * (Gamma/2) / (x_vals_nm - lam + 1j*Gamma/2)
+                        I_dark = np.abs(A_dark)**2
                         
-                        ax.plot(wavelengths, I_dark, ':', linewidth=2, 
-                               label=f'Dark {j+1} ({lam:.1f} nm, θ={theta:.2f} rad)', alpha=0.7)
+                        # 2) 플롯 직전에만 단위 변환 + 정렬
+                        if output_unit == 'eV':
+                            x_vals_plot = 1239.842 / x_vals_nm
+                            order = np.argsort(x_vals_plot)
+                            x_vals_plot = x_vals_plot[order]
+                            I_dark = I_dark[order]
+                            label_lam = 1239.842 / lam
+                            unit_tag = 'eV'
+                        else:
+                            x_vals_plot = x_vals_nm
+                            label_lam = lam
+                            unit_tag = 'nm'
+                        
+                        ax.plot(x_vals_plot, I_dark, ':', linewidth=2, 
+                               label=f'Dark {j+1} ({label_lam:.3f} {unit_tag}, θ={theta:.2f} rad)', alpha=0.7)
         
         elif fitting_model == 'lorentzian':
             # ============================================
@@ -669,18 +671,25 @@ def plot_spectrum(wavelengths: np.ndarray,
                     c = params.get(f'c{i}', 0)
                     
                     if a > 0 and b > 0 and c > 0:
-                        # Lorentzian function
-                        if output_unit == 'eV':
-                            # Convert peak position to eV
-                            b_ev = 1239.842 / b
-                            # Component in wavelength space
-                            wl_space = 1239.842 / wavelengths
-                            component = (2*a/np.pi) * (c / (4*(wl_space - b)**2 + c**2))
-                        else:
-                            component = (2*a/np.pi) * (c / (4*(wavelengths - b)**2 + c**2))
+                        # 1) Lorentzian 계산은 항상 nm에서
+                        x_vals_nm = wavelengths  # nm
+                        component = (2*a/np.pi) * (c / (4*(x_vals_nm - b)**2 + c**2))
                         
-                        ax.plot(wavelengths, component, '--', linewidth=1.5, 
-                               label=f'Peak {i} ({b:.1f} nm)', alpha=0.7)
+                        # 2) 플롯 직전에만 단위 변환 + 정렬
+                        if output_unit == 'eV':
+                            x_vals_plot = 1239.842 / x_vals_nm
+                            order = np.argsort(x_vals_plot)
+                            x_vals_plot = x_vals_plot[order]
+                            component = component[order]
+                            label_b = 1239.842 / b
+                            unit_tag = 'eV'
+                        else:
+                            x_vals_plot = x_vals_nm
+                            label_b = b
+                            unit_tag = 'nm'
+                        
+                        ax.plot(x_vals_plot, component, '--', linewidth=1.5, 
+                               label=f'Peak {i} ({label_b:.3f} {unit_tag})', alpha=0.7)
         
         # =====================================================================
         # Add fitting parameters as text annotation
