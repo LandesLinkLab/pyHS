@@ -435,14 +435,16 @@ class EChemAnalyzer:
             
             # ===== Save text data =====
             if output_unit == 'eV':
-                # ✓ 수정: wavelength를 energy로 올바르게 변환
+                # ✓✓✓ 수정: 제대로 정렬해서 변환
                 energy = 1239.842 / self.dataset.wavelengths
-                # energy 증가 순서로 정렬
-                energy = energy[::-1]
-                spectrum = param['spectrum'][::-1]
-                fit = param['fit'][::-1]
                 
-                data = np.column_stack((energy, spectrum, fit))
+                # energy 증가 순서로 정렬 (argsort 사용)
+                sort_idx = np.argsort(energy)
+                energy_sorted = energy[sort_idx]
+                spectrum_sorted = param['spectrum'][sort_idx]
+                fit_sorted = param['fit'][sort_idx]
+                
+                data = np.column_stack((energy_sorted, spectrum_sorted, fit_sorted))
 
                 header = f"Energy(eV)\tIntensity\tFit\n"
                 
@@ -452,9 +454,7 @@ class EChemAnalyzer:
                     fwhm_ev = param.get(f'FWHMeV{peak_idx}', 0)
                     
                     if peak_ev > 0:
-                        # ✓ 수정: eV → nm 변환도 추가 (역변환)
                         peak_nm = 1239.842 / peak_ev
-                        # FWHM eV → nm 변환
                         fwhm_nm = abs(1239.842/(peak_ev - fwhm_ev/2) - 1239.842/(peak_ev + fwhm_ev/2))
                         header += f"# Peak {peak_idx}: {peak_ev:.3f} eV ({peak_nm:.1f} nm), FWHM: {fwhm_ev:.3f} eV ({fwhm_nm:.1f} nm)\n"
                 
@@ -486,12 +486,13 @@ class EChemAnalyzer:
             np.savetxt(output_file, data, delimiter='\t', header=header, 
                       comments='', fmt='%.6f')
             
-            # Generate plots (with fit)
+            # ✓✓✓ Generate plots - r2 파라미터 제거
             plot_title = f"Spectrum {i+1} | t={param['time']:.1f}s, V={param['voltage']:.3f}V"
-            
             plot_path = plots_dir / f"{self.dataset.sample_name}_spectrum_{i+1:04d}.png"
+            
+            # Plot with fit
             su.plot_spectrum(
-                self.dataset.wavelengths,
+                self.dataset.wavelengths,  # nm 단위로 플롯 (eV는 plot_spectrum 내부에서 처리)
                 param['spectrum'],
                 param['fit'],
                 plot_title,
@@ -503,7 +504,7 @@ class EChemAnalyzer:
                 show_fit=True
             )
             
-            # Generate plots (raw only)
+            # Plot raw only
             plot_path_raw = plots_raw_dir / f"{self.dataset.sample_name}_spectrum_{i+1:04d}.png"
             su.plot_spectrum(
                 self.dataset.wavelengths,
