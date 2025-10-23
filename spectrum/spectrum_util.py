@@ -618,8 +618,7 @@ def plot_spectrum(wavelengths: np.ndarray,
                             label_lam = lam
                             unit_tag = 'nm'
 
-                        ax.plot(x_vals_plot, I_bright, '--', linewidth=1.5,
-                                label=f'Bright {i+1} ({label_lam:.3f} {unit_tag})', alpha=0.7)
+                        ax.plot(x_vals_plot, I_bright, '--', linewidth=1.5, label=f'Bright {i+1} ({label_lam:.3f} {unit_tag})', alpha=0.7, color='green')
 
                 # Plot dark modes
                 for j in range(num_dark):
@@ -647,8 +646,8 @@ def plot_spectrum(wavelengths: np.ndarray,
                             label_lam = lam
                             unit_tag = 'nm'
                         
-                        ax.plot(x_vals_plot, I_dark, ':', linewidth=2, 
-                               label=f'Dark {j+1} ({label_lam:.3f} {unit_tag}, θ={theta:.2f} rad)', alpha=0.7)
+                        theta_pi = theta / np.pi
+                        ax.plot(x_vals_plot, I_dark, ':', linewidth=2, label=f'Dark {j+1} ({label_lam:.3f} {unit_tag}, θ={theta_pi:.2f}π)', alpha=0.7, color='red')
         
         elif fitting_model == 'lorentzian':
             # ============================================

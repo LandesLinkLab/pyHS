@@ -55,7 +55,7 @@ args['FITTING_MODEL'] = 'fano'  # 'lorentzian' or 'fano'
                                       # 'fano': Physical Interference Model (bright + dark modes)
 
 # Multi-Attempt Fitting 
-args['FIT_MAX_ITERATIONS'] = 1  # Number of iterative refinement cycles
+args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles
 
 # ============================================================================
 # FITTING PARAMETERS - (used when FITTING_MODEL = 'lorentzian')
