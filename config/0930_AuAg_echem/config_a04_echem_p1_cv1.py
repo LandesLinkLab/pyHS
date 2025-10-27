@@ -12,85 +12,45 @@ args = dict()
 # ============================================================================
 # ANALYSIS MODE
 # ============================================================================
-args['ANALYSIS_MODE'] = 'dfs'
+args['ANALYSIS_MODE'] = 'echem'
 
 # ============================================================================
 # BASIC FILE AND DIRECTORY SETTINGS
 # ============================================================================
-args['SAMPLE_NAME'] = 'AuNR_PMMA'  # Name of the main TDMS file (without .tdms extension)
-args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/raw_jmkim')  # Directory containing TDMS files
+args['ECHEM_SAMPLE_NAME'] = 'a04_echem_p1_cv1'  # Name of EChem spectral TDMS file (without .tdms extension)
+                                            # This file contains time-series spectra during electrochemical experiment
+args['ECHEM_CHI_FILE'] = 'chi_cv'     # CHI potentiostat data file name (without .txt extension)
+                                            # Contains voltage, current, and charge data synchronized with spectra
+
+args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/093025_AuAg_echem')  # Directory containing TDMS and CHI files
 args['WHITE_FILE'] = "wc.tdms"     # White reference file name for flatfield correction
 args['DARK_FILE'] = "dc.tdms"      # Dark reference file name for flatfield correction
-args['OUTPUT_DIR'] = os.path.join(home, "research", "pyHS_dfs_output")  # Output directory for DFS results
-
-# ============================================================================
-# DFS (DARK FIELD SCATTERING) SPECIFIC SETTINGS
-# ============================================================================
-args['DFS_WL_RANGE'] = (500, 850)  # Wavelength range (nm) for creating DFS maximum intensity projection map
-                                    # This range is used to identify the spectral region where particles scatter light most strongly
+args['OUTPUT_DIR'] = os.path.join(home, "research/pyHS", "093025_AuAg_echem/a04_echem_p1_cv1")  # Output directory for EChem results
+                                                                            # EChem saves to: OUTPUT_DIR/echem/
 
 # ============================================================================
 # PREPROCESSING PARAMETERS
 # ============================================================================
-args['CROP_RANGE_NM'] = (500, 850)  # Wavelength range (nm) to crop from the full hyperspectral cube
+args['CROP_RANGE_NM'] = (500, 1000)  # Wavelength range (nm) to crop from the full hyperspectral cube
                                      # This reduces data size and focuses analysis on the region of interest
+                                     # Applied after LOWERCUT/UPPERCUT pixel trimming
 
 # ============================================================================
-# BACKGROUND CORRECTION SETTINGS
+# ECHEM EXPERIMENTAL PARAMETERS
 # ============================================================================
-args['BACKGROUND_MODE'] = 'global'  # Background correction method: 'global' (MATLAB style) or 'local'
-                                    # Global: uses darkest pixels across entire image for background
-                                    # Local: uses dark regions around each particle for individual background
-
-# Global background parameters (MATLAB-compatible)
-args['BACKGROUND_PERCENTILE'] = 0.1  # Fraction of darkest pixels to use for global background (10%)
-                                      # Matches MATLAB's standard approach for background estimation
-
-# Local background parameters (used when BACKGROUND_MODE = 'local')
-args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20  # Search radius (pixels) around each particle for local background
-args['BACKGROUND_LOCAL_PERCENTILE'] = 1      # Percentile of darkest pixels within search area for background
-
-# ============================================================================
-# PARTICLE DETECTION SETTINGS
-# ============================================================================
-args['PARTICLE_DETECTION_STYLE'] = 'python'  # Detection algorithm: 'python' or 'matlab'
-                                              # Python: threshold-based connected component analysis
-                                              # MATLAB: multi-threshold single-pixel detection (partident.m compatible)
-
-# Python-style detection parameters
-args['DFS_INTENSITY_THRESHOLD'] = 0.01  # Normalized intensity threshold for particle detection
-                                         # Lower values = more sensitive detection, higher values = more selective
-args['MIN_PIXELS_CLUS'] = 1             # Minimum cluster size in pixels (applies to both Python & MATLAB styles)
-                                         # Clusters smaller than this are rejected as noise
-
-# MATLAB-style detection parameters (used when PARTICLE_DETECTION_STYLE = 'matlab')
-args['PARTICLE_LOWER_BOUND'] = 0      # Lower threshold bound for multi-threshold detection
-args['PARTICLE_UPPER_BOUND'] = 0.5    # Upper threshold bound for multi-threshold detection
-args['NHOOD_SIZE'] = 1                # Neighborhood size for edge exclusion (must be odd number)
-                                       # Larger values exclude more edge pixels from detection
-
-# ============================================================================
-# SPECTRAL ANALYSIS
-# ============================================================================
-# Representative selection parameters
-args['PEAK_TOL_NM'] = 3.0     # Wavelength tolerance (nm) for grouping similar peaks
-                               # Currently not actively used but available for advanced filtering
-
-# Quality filtering parameters
-args['MAX_WIDTH_NM'] = 59      # Maximum allowed FWHM (nm) for Lorentzian fits
-                               # Particles with broader resonances are rejected as potentially damaged or aggregated
-args['RSQ_MIN'] = 0.90         # Minimum R-squared value for accepting Lorentzian fits
-                               # Ensures only high-quality spectral fits are included in analysis
-
+args['ECHEM_TECHNIQUE'] = 'CV'        # Electrochemical technique: 'CV', 'CA', or 'CC'
+                                      # CV: Cyclic Voltammetry (voltage cycles)
+                                      # CA: Chronoamperometry (potential steps)
+                                      # CC: Chronocoulometry (potential steps with charge integration)
 
 # ============================================================================
 # FITTING PARAMETERS - SHARED
 # ============================================================================
 # Lorentzian fitting parameters
-args['FIT_RANGE_NM'] = (500, 850)  # Wavelength range (nm) for Lorentzian curve fitting
+args['FIT_RANGE_NM'] = (500, 1000)  # Wavelength range (nm) for Lorentzian curve fitting
                                     # Should encompass the full resonance peak for accurate parameter extraction
 
-args['FITTING_MODEL'] = 'lorentzian'  # 'lorentzian' or 'fano'
+args['FITTING_MODEL'] = 'fano'  # 'lorentzian' or 'fano'
                                       # 'lorentzian': Traditional multi-peak Lorentzian fitting
                                       # 'fano': Physical Interference Model (bright + dark modes)
 
@@ -98,14 +58,14 @@ args['FITTING_MODEL'] = 'lorentzian'  # 'lorentzian' or 'fano'
 # FITTING PARAMETERS - (used when FITTING_MODEL = 'lorentzian')
 # ============================================================================
 # Multi-Attempt Fitting 
-args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles                                      
+args['FIT_MAX_ITERATIONS'] = 1  # Number of iterative refinement cycles
 
-args['NUM_PEAKS'] = 1  # Number of Lorentzian peaks to fit per spectrum
+args['NUM_PEAKS'] = 3  # Number of Lorentzian peaks to fit per spectrum
                        # 1: Single peak (monomers, simple nanoparticles)
                        # 2: Two peaks (dimers, coupled nanoparticles)
                        # 3+: Multiple peaks (complex coupled systems)
 
-args['PEAK_INITIAL_GUESS'] = 'auto'  # Initial guess for peak positions
+args['PEAK_INITIAL_GUESS'] = [560, 670, 940]  # Initial guess for peak positions
                                       # 'auto': Automatic peak detection using scipy.signal.find_peaks
                                       # [650, 800]: Manual specification (wavelength in nm)
                                       # Must provide NUM_PEAKS values if manual
@@ -135,20 +95,26 @@ args['FIT_BRIGHT_ITERATIONS'] = 50   # Step 1: Bright only iteration
 args['FIT_DARK_ITERATIONS'] = 10    # Step 2: Dark only iteration
 
 # Bright modes (phase = 0 fixed)
-args['NUM_BRIGHT_MODES'] = 2  # Number of bright modes (non-interacting background)
-args['BRIGHT_INITIAL_GUESS'] = [690, 565]  # Wavelengths in nm (REQUIRED, must be a list)
+args['NUM_BRIGHT_MODES'] = 3  # Number of bright modes (non-interacting background)
+args['BRIGHT_INITIAL_GUESS'] = [560, 670, 940]  # Wavelengths in nm (REQUIRED, must be a list)
                                             # Example: [690, 565] for two bright peaks
-args['BRIGHT_POSITION_TOLERANCE'] = [10, 10]  # ±nm constraint for each bright peak
+args['BRIGHT_POSITION_TOLERANCE'] = [20, 20, 30]  # ±nm constraint for each bright peak
                                                # Can be a single value or list matching NUM_BRIGHT_MODES
                                                # Example: 10 → all peaks ±10 nm
                                                # Example: [10, 20] → first ±10, second ±20
 
 # Dark modes (phase fitted)
-args['NUM_DARK_MODES'] = 1  # Number of dark modes (interacting resonances)
-args['DARK_INITIAL_GUESS'] = [620]  # Wavelengths in nm (REQUIRED, must be a list)
+args['NUM_DARK_MODES'] = 0  # Number of dark modes (interacting resonances)
+args['DARK_INITIAL_GUESS'] = []  # Wavelengths in nm (REQUIRED, must be a list)
                                      # Example: [620] for one dark mode at 620 nm
-args['DARK_POSITION_TOLERANCE'] = [10]  # ±nm constraint for each dark peak
+args['DARK_POSITION_TOLERANCE'] = []  # ±nm constraint for each dark peak
                                          # Can be a single value or list matching NUM_DARK_MODES
+                                         
+# args['NUM_DARK_MODES'] = 2  # Number of dark modes (interacting resonances)
+# args['DARK_INITIAL_GUESS'] = [700, 850]  # Wavelengths in nm (REQUIRED, must be a list)
+#                                      # Example: [620] for one dark mode at 620 nm
+# args['DARK_POSITION_TOLERANCE'] = [10, 10]  # ±nm constraint for each dark peak
+#                                          # Can be a single value or list matching NUM_DARK_MODES
 
 # Fano-specific fitting parameters
 args['FANO_PHI_INIT'] = np.pi  # Initial phase for dark modes (radians)
@@ -170,7 +136,53 @@ args['FANO_GAMMA_RANGE'] = (5, 100)  # Linewidth range in nm for both γ (bright
 args['FANO_DEBUG'] = True  # If True, prints detailed fitting information
                            # Shows Step 1 and Step 2 results with parameters
                            # Useful for troubleshooting and understanding fitting process
+                             
+# ============================================================================
+# ELECTROCHEMICAL REFERENCE PARAMETERS
+# ============================================================================
+args['ECHEM_OCP'] = 0.00              # Open circuit potential (V) used as baseline reference
+                                      # Spectral changes (Δ parameters) are calculated relative to OCP
+                                      # Measure this experimentally: equilibrium voltage before applying CV
+                                      # 
+                                      # How to measure:
+                                      # 1. Prepare sample in electrochemical cell
+                                      # 2. Wait for equilibration (no voltage applied)
+                                      # 3. Measure stable potential → this is your OCP
+                                      # 4. Set this value here before running analysis
 
+# ============================================================================
+# CYCLE/STEP ANALYSIS PARAMETERS
+# ============================================================================
+args['ECHEM_CYCLE_START'] = 1         # First cycle to include in averaging (1-indexed)
+                                      # Use this to skip initial unstable cycles
+                                      # Example: Set to 2 if first cycle shows unusual behavior
+
+args['ECHEM_CYCLE_BACKCUT'] = 0       # Number of cycles to exclude from the end
+                                      # Use this to exclude degraded final cycles
+                                      # Example: Set to 1 if last cycle shows particle damage
+
+# ============================================================================
+# SPECTRAL PROCESSING PARAMETERS
+# ============================================================================
+args['ECHEM_LOWERCUT'] = 0          # Pixels to trim from blue (short wavelength) end of spectrum
+                                      # Removes unreliable edge pixels affected by detector artifacts
+                                      # Processing order: LOWERCUT/UPPERCUT (pixels) → CROP_RANGE_NM (wavelength)
+
+args['ECHEM_UPPERCUT'] = 0          # Pixels to trim from red (long wavelength) end of spectrum
+                                      # These values match MATLAB cv_analysis script parameters
+                                      # Typical values: 140/260 but may need adjustment per instrument
+
+# ============================================================================
+# QUALITY FILTERING PARAMETERS
+# ============================================================================
+args['ECHEM_MAX_WIDTH_EV'] = 10     # Maximum allowed FWHM in eV for Lorentzian fits
+                                      # More lenient than DFS (~0.059 eV) due to electrochemical broadening
+                                      # Broader peaks during charging/discharging are normal
+                                      # Peaks broader than this are rejected as severely degraded
+
+args['ECHEM_RSQ_MIN'] = 0.0001          # Minimum R-squared value for accepting fits
+                                      # More lenient than DFS (0.90) to accommodate noisier time-series data
+                                      # Lower threshold accounts for rapid spectral changes during cycling
 
 # ============================================================================
 # OUTPUT AND VISUALIZATION SETTINGS
@@ -178,43 +190,13 @@ args['FANO_DEBUG'] = True  # If True, prints detailed fitting information
 args['FIG_DPI'] = 300  # Resolution (dots per inch) for saved figures
                        # 300 DPI is publication quality, 150 DPI is suitable for presentations
 
+# Display parameters for detailed cycle plots (reserved for future implementation)
+args['ECHEM_CYCLE_PLOT_START'] = 1    # First cycle to display in detail plots
+args['ECHEM_CYCLE_PLOT_END'] = 4      # Last cycle to display in detail plots
 args['OUTPUT_UNIT'] = 'eV'            # Unit for spectral output: 'nm' (wavelength) or 'eV' (energy)
                                       # 'nm': Traditional wavelength units (λ in nanometers)
                                       # 'eV': Energy units (E = hc/λ = 1239.842/λ_nm)
 
-# ============================================================================
-# MANUAL COORDINATE OVERRIDE (ADVANCED USERS)
-# ============================================================================
-args['USE_MANUAL_COORDS'] = False  # Set to True to use manually specified particle coordinates
-                                   # When True, automatic detection is bypassed and only specified coordinates are analyzed
-
-# Manual coordinate list (used only when USE_MANUAL_COORDS = True)
-# Format: (Row, Col) - note this is (Y, X) in image coordinates, not (X, Y)
-# Each coordinate will be expanded to a 3x3 pixel region for analysis
-args['MANUAL_COORDS'] = [
-    (30, 29),    # Particle 1
-    (42, 27),    # Particle 2
-    (42, 38),    # Particle 3
-    (33, 55),    # Particle 4
-    (33, 73),    # Particle 5
-    (15, 92),    # Particle 6
-    (18, 92),    # Particle 7
-    (40, 112),   # Particle 8
-    (13, 130),   # Particle 9
-    (14, 134),   # Particle 10
-    (11, 148),   # Particle 11
-    (15, 152),   # Particle 12
-    (19, 162),   # Particle 13
-    (26, 145),   # Particle 14
-    (29, 142),   # Particle 15
-    (33, 140),   # Particle 16
-    (30, 168),   # Particle 17
-    (39, 136),   # Particle 18
-    (42, 134),   # Particle 19
-    (21, 188),   # Particle 20
-    (23, 176),   # Particle 21
-    (31, 196),   # Particle 22
-]
 
 # ============================================================================
 # DEBUG AND DEVELOPMENT SETTINGS

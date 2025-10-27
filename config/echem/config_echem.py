@@ -52,14 +52,13 @@ args['FIT_RANGE_NM'] = (500, 850)  # Wavelength range (nm) for Lorentzian curve 
 
 args['FITTING_MODEL'] = 'lorentzian'  # 'lorentzian' or 'fano'
                                       # 'lorentzian': Traditional multi-peak Lorentzian fitting
-                                      # 'fano': Physical Interference Model (bright + dark modes)
-
-# Multi-Attempt Fitting 
-args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles                                      
+                                      # 'fano': Physical Interference Model (bright + dark modes)                                 
 
 # ============================================================================
 # FITTING PARAMETERS - (used when FITTING_MODEL = 'lorentzian')
 # ============================================================================
+# Multi-Attempt Fitting 
+args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles     
 
 args['NUM_PEAKS'] = 1  # Number of Lorentzian peaks to fit per spectrum
                        # 1: Single peak (monomers, simple nanoparticles)
@@ -92,6 +91,9 @@ args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions durin
 # ============================================================================
 # FITTING PARAMETERS - (used when FITTING_MODEL = 'fano')
 # ============================================================================
+args['FIT_BRIGHT_ITERATIONS'] = 50   # Step 1: Bright only iteration
+args['FIT_DARK_ITERATIONS'] = 10    # Step 2: Dark only iteration
+
 # Bright modes (phase = 0 fixed)
 args['NUM_BRIGHT_MODES'] = 2  # Number of bright modes (non-interacting background)
 args['BRIGHT_INITIAL_GUESS'] = [690, 565]  # Wavelengths in nm (REQUIRED, must be a list)

@@ -17,7 +17,7 @@ args['ANALYSIS_MODE'] = 'echem'
 # ============================================================================
 # BASIC FILE AND DIRECTORY SETTINGS
 # ============================================================================
-args['ECHEM_SAMPLE_NAME'] = 'a15_echem_p4_cv4'  # Name of EChem spectral TDMS file (without .tdms extension)
+args['ECHEM_SAMPLE_NAME'] = 'a15_echem_p3_cv2'  # Name of EChem spectral TDMS file (without .tdms extension)
                                             # This file contains time-series spectra during electrochemical experiment
 args['ECHEM_CHI_FILE'] = 'chi_cv'     # CHI potentiostat data file name (without .txt extension)
                                             # Contains voltage, current, and charge data synchronized with spectra
@@ -25,7 +25,7 @@ args['ECHEM_CHI_FILE'] = 'chi_cv'     # CHI potentiostat data file name (without
 args['DATA_DIR'] = os.path.join(home, 'dataset/pyHS/093025_AuAg_echem')  # Directory containing TDMS and CHI files
 args['WHITE_FILE'] = "wc.tdms"     # White reference file name for flatfield correction
 args['DARK_FILE'] = "dc.tdms"      # Dark reference file name for flatfield correction
-args['OUTPUT_DIR'] = os.path.join(home, "research/pyHS", "093025_AuAg_echem")  # Output directory for EChem results
+args['OUTPUT_DIR'] = os.path.join(home, "research/pyHS", "093025_AuAg_echem/a15_echem_p3_cv2")  # Output directory for EChem results
                                                                             # EChem saves to: OUTPUT_DIR/echem/
 
 # ============================================================================
@@ -54,19 +54,18 @@ args['FITTING_MODEL'] = 'fano'  # 'lorentzian' or 'fano'
                                       # 'lorentzian': Traditional multi-peak Lorentzian fitting
                                       # 'fano': Physical Interference Model (bright + dark modes)
 
-# Multi-Attempt Fitting 
-args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles
-
 # ============================================================================
 # FITTING PARAMETERS - (used when FITTING_MODEL = 'lorentzian')
 # ============================================================================
+# Multi-Attempt Fitting 
+args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles
 
 args['NUM_PEAKS'] = 3  # Number of Lorentzian peaks to fit per spectrum
                        # 1: Single peak (monomers, simple nanoparticles)
                        # 2: Two peaks (dimers, coupled nanoparticles)
                        # 3+: Multiple peaks (complex coupled systems)
 
-args['PEAK_INITIAL_GUESS'] = [580, 700, 760]  # Initial guess for peak positions
+args['PEAK_INITIAL_GUESS'] = [580, 650, 750]  # Initial guess for peak positions
                                       # 'auto': Automatic peak detection using scipy.signal.find_peaks
                                       # [650, 800]: Manual specification (wavelength in nm)
                                       # Must provide NUM_PEAKS values if manual
@@ -92,6 +91,9 @@ args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions durin
 # ============================================================================
 # FITTING PARAMETERS - (used when FITTING_MODEL = 'fano')
 # ============================================================================
+args['FIT_BRIGHT_ITERATIONS'] = 50   # Step 1: Bright only iteration
+args['FIT_DARK_ITERATIONS'] = 10    # Step 2: Dark only iteration
+
 # Bright modes (phase = 0 fixed)
 args['NUM_BRIGHT_MODES'] = 3  # Number of bright modes (non-interacting background)
 args['BRIGHT_INITIAL_GUESS'] = [580, 700, 760]  # Wavelengths in nm (REQUIRED, must be a list)
@@ -102,10 +104,10 @@ args['BRIGHT_POSITION_TOLERANCE'] = [20, 20, 30]  # ±nm constraint for each bri
                                                # Example: [10, 20] → first ±10, second ±20
 
 # Dark modes (phase fitted)
-args['NUM_DARK_MODES'] = 1  # Number of dark modes (interacting resonances)
-args['DARK_INITIAL_GUESS'] = [620]  # Wavelengths in nm (REQUIRED, must be a list)
+args['NUM_DARK_MODES'] = 0  # Number of dark modes (interacting resonances)
+args['DARK_INITIAL_GUESS'] = []  # Wavelengths in nm (REQUIRED, must be a list)
                                      # Example: [620] for one dark mode at 620 nm
-args['DARK_POSITION_TOLERANCE'] = [10]  # ±nm constraint for each dark peak
+args['DARK_POSITION_TOLERANCE'] = []  # ±nm constraint for each dark peak
                                          # Can be a single value or list matching NUM_DARK_MODES
 
 # Fano-specific fitting parameters

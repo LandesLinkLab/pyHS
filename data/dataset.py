@@ -618,38 +618,62 @@ class Dataset(object):
                    np.column_stack([self.spec_times, self.voltages]),
                    header="Time(s)\tVoltage(V)",
                    delimiter='\t', fmt='%.6f')
-        
+
         # ========================================
-        # 4. Sample spectra
+        # 4. Sample spectra (Voltage-based sampling)
         # ========================================
-        print("[debug] Saving sample spectra...")
-        
+        print("[debug] Saving sample spectra (voltage-based sampling)...")
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        
-        n_plot = min(5, self.spectra.shape[0])
-        indices = np.linspace(0, self.spectra.shape[0]-1, n_plot, dtype=int)
-        
+
+        # 전압 범위 자동 계산
+        v_min = np.min(self.voltages)
+        v_max = np.max(self.voltages)
+
+        # 7개 전압 포인트 샘플링 (0.1V 간격으로 반올림)
+        # 예: -0.4V ~ 0.2V → [-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2]
+        v_min_rounded = np.round(v_min * 10) / 10  # 0.1V 단위로 반올림
+        v_max_rounded = np.round(v_max * 10) / 10
+        target_voltages = np.linspace(v_min_rounded, v_max_rounded, 7)
+
+        # 각 목표 전압에 가장 가까운 스펙트럼 찾기
+        indices = []
+        for target_v in target_voltages:
+            # 해당 전압과 가장 가까운 시점 찾기
+            voltage_diffs = np.abs(self.voltages - target_v)
+            closest_idx = np.argmin(voltage_diffs)
+            
+            # 중복 방지 (같은 인덱스가 이미 선택된 경우 다음으로 가까운 것 선택)
+            while closest_idx in indices and len(voltage_diffs) > len(indices):
+                voltage_diffs[closest_idx] = np.inf
+                closest_idx = np.argmin(voltage_diffs)
+            
+            indices.append(closest_idx)
+
+        indices = sorted(set(indices))  # 중복 제거 및 정렬
+
+        # 스펙트럼 플롯
         for idx in indices:
-            label = f't={self.spec_times[idx]:.1f}s, V={self.voltages[idx]:.2f}V'
+            actual_voltage = self.voltages[idx]
+            label = f'V={actual_voltage:.2f}V (t={self.spec_times[idx]:.1f}s)'
             ax.plot(self.wavelengths, self.spectra[idx, :], label=label, linewidth=2)
-        
+
         ax.set_xlabel('Wavelength (nm)', fontsize=12)
         ax.set_ylabel('Scattering (a.u.)', fontsize=12)
-        ax.set_title(f'{self.sample_name} - Sample Spectra', fontsize=14)
-        ax.legend()
+        ax.set_title(f'{self.sample_name} - Sample Spectra (Voltage Range: {v_min:.2f}V to {v_max:.2f}V)', 
+                     fontsize=14)
+        ax.legend(fontsize=9, loc='best')
         ax.grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
         plt.savefig(output_dir / f"{self.sample_name}_sample_spectra.png", dpi=150)
         plt.close()
-        
+
         # 데이터 저장 (sample spectra)
+        print(f"[info] Sampled voltages: {[f'{self.voltages[idx]:.2f}V' for idx in indices]}")
         for idx in indices:
             data = np.column_stack([self.wavelengths, self.spectra[idx, :]])
-            np.savetxt(data_dir / f"{self.sample_name}_sample_spectrum_t{self.spec_times[idx]:.1f}s.txt",
+            np.savetxt(data_dir / f"{self.sample_name}_sample_spectrum_V{self.voltages[idx]:.2f}V.txt",
                        data,
-                       header=f"Wavelength(nm)\tIntensity\nTime: {self.spec_times[idx]:.1f}s, Voltage: {self.voltages[idx]:.2f}V",
+                       header=f"Wavelength(nm)\tIntensity\nVoltage: {self.voltages[idx]:.2f}V, Time: {self.spec_times[idx]:.1f}s",
                        delimiter='\t', fmt='%.6f')
-        
-        print(f"[info] Saved plots to {output_dir}")
-        print(f"[info] Saved plot data to {data_dir}")

@@ -934,6 +934,13 @@ def fit_fano(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.nda
     mask = (x >= fit_min) & (x <= fit_max)
     x_fit = x[mask]
     y_fit = y[mask]
+
+    bright_iter = args.get('FIT_BRIGHT_ITERATIONS')
+    dark_iter = args.get('FIT_DARK_ITERATIONS')
+
+    if debug:
+        print(f"Bright iterations: {bright_iter}")
+        print(f"Dark iterations: {dark_iter}")
     
     # Validate input data
     if len(y_fit) == 0 or np.all(y_fit == 0) or np.isnan(y_fit).any():
@@ -957,7 +964,7 @@ def fit_fano(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.nda
             print("\n[STEP 1] Fitting bright modes only...")
         
         y_fit_step1, params_step1, r2_step1 = fit_fano_bright_only(
-            args, y_fit, x_fit, num_bright, bright_guess
+            args, y_fit, x_fit, num_bright, bright_guess, bright_iter
         )
         
         if debug:
@@ -977,7 +984,7 @@ def fit_fano(args: Dict[str, Any], y: np.ndarray, x: np.ndarray) -> Tuple[np.nda
         
         y_fit_step2, params_step2, r2_step2 = fit_fano_with_dark(
             args, y_fit, x_fit, num_bright, num_dark, 
-            bright_guess, dark_guess, params_step1
+            bright_guess, dark_guess, params_step1, dark_iter
         )
         
         if debug:
@@ -1003,17 +1010,47 @@ def fit_fano_bright_only(args: Dict[str, Any],
                          y_fit: np.ndarray, 
                          x_fit: np.ndarray,
                          num_bright: int,
-                         bright_guess: List[float]) -> Tuple[np.ndarray, Dict[str, float], float]:
+                         bright_guess: List[float],
+                         max_iterations: int) -> Tuple[np.ndarray, Dict[str, float], float]:
     """
-    Step 1: Fit bright modes only (phase = 0)
+    Step 1: Fit bright modes only (phase = 0) with iterative strategy exploration
     
     Model: I = |Σ c_i × (γ_i/2) / (λ - λ_i + i×γ_i/2)|²
     
     Parameters to fit per bright mode: [c_i, λ_i, γ_i]
     Total parameters: 3 × num_bright
+    
+    Iterative fitting:
+    - Each iteration tries 6 strategies (current_best, shift_left, shift_right, narrow, widen, random)
+    - Best result from iteration N becomes starting point for iteration N+1
+    - Early termination if R² > 0.99
+    
+    Parameters:
+    -----------
+    args : Dict[str, Any]
+        Configuration dictionary with bounds and tolerances
+    y_fit : np.ndarray
+        Spectrum data in fitting range
+    x_fit : np.ndarray
+        Wavelength array in fitting range
+    num_bright : int
+        Number of bright modes to fit
+    bright_guess : List[float]
+        Initial wavelength positions for bright modes (nm)
+    max_iterations : int
+        Maximum number of iterative refinement cycles
+    
+    Returns:
+    --------
+    Tuple[np.ndarray, Dict[str, float], float]
+        - Fitted curve in fitting range
+        - Parameter dict: {bright1_c, bright1_lambda, bright1_gamma, ...}
+        - R-squared goodness of fit
     """
     
-    # Define bright-only model
+    # ========================================
+    # 1. Define bright-only model
+    # ========================================
     def fano_bright(x_val, *params):
         """Bright modes: phase = 0"""
         A_total = np.zeros_like(x_val, dtype=complex)
@@ -1031,7 +1068,9 @@ def fit_fano_bright_only(args: Dict[str, Any],
         I = np.abs(A_total)**2
         return I
     
-    # Initial guess
+    # ========================================
+    # 2. Initial guess
+    # ========================================
     p0 = []
     for i in range(num_bright):
         c0 = 1.0  # Default amplitude
@@ -1039,7 +1078,9 @@ def fit_fano_bright_only(args: Dict[str, Any],
         gamma0 = 30.0  # Default linewidth
         p0.extend([c0, lam0, gamma0])
     
-    # Bounds
+    # ========================================
+    # 3. Setup bounds
+    # ========================================
     q_range = args.get('FANO_Q_RANGE', (-20, 20))
     gamma_range = args.get('FANO_GAMMA_RANGE', (5, 100))
     
@@ -1063,35 +1104,158 @@ def fit_fano_bright_only(args: Dict[str, Any],
         lower_bounds.extend([q_range[0], max(x_fit.min(), lam0 - tol), gamma_range[0]])
         upper_bounds.extend([q_range[1], min(x_fit.max(), lam0 + tol), gamma_range[1]])
     
-    # Fit
-    try:
-        popt, _ = curve_fit(
-            fano_bright, 
-            x_fit, 
-            y_fit,
-            p0=p0,
-            bounds=(lower_bounds, upper_bounds),
-            maxfev=10000,
-            method='trf'
-        )
+    # ========================================
+    # 4. Iterative fitting with strategy exploration
+    # ========================================
+    strategies = ['current_best', 'shift_peaks_left', 'shift_peaks_right', 
+                  'narrow_fwhm', 'widen_fwhm', 'random_explore']
+    
+    global_best_r2 = -np.inf
+    global_best_params = None
+    p0_current = p0.copy()
+    
+    for iteration in range(max_iterations):
+        print(f"\n[Bright Iteration {iteration+1}/{max_iterations}]")
         
-        # Calculate R²
-        y_fit_curve = fano_bright(x_fit, *popt)
-        ss_res = np.sum((y_fit - y_fit_curve)**2)
-        ss_tot = np.sum((y_fit - y_fit.mean())**2)
-        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+        iteration_best_r2 = -np.inf
+        iteration_best_params = None
         
-        # Package parameters
+        for strategy_idx, strategy in enumerate(strategies):
+            # ========================================
+            # Apply strategy transformation
+            # ========================================
+            if strategy == 'current_best':
+                p0_trial = p0_current.copy()
+                print(f"  Strategy {strategy_idx+1}/6: {strategy}")
+            
+            elif strategy == 'shift_peaks_left':
+                p0_trial = p0_current.copy()
+                shift_amount = 5  # nm
+                for i in range(num_bright):
+                    lam_current = p0_current[3*i + 1]
+                    lam_new = lam_current - shift_amount
+                    # Ensure within bounds
+                    lam_new = max(lower_bounds[3*i + 1], min(upper_bounds[3*i + 1], lam_new))
+                    p0_trial[3*i + 1] = lam_new
+                print(f"  Strategy {strategy_idx+1}/6: {strategy}")
+            
+            elif strategy == 'shift_peaks_right':
+                p0_trial = p0_current.copy()
+                shift_amount = 5  # nm
+                for i in range(num_bright):
+                    lam_current = p0_current[3*i + 1]
+                    lam_new = lam_current + shift_amount
+                    # Ensure within bounds
+                    lam_new = max(lower_bounds[3*i + 1], min(upper_bounds[3*i + 1], lam_new))
+                    p0_trial[3*i + 1] = lam_new
+                print(f"  Strategy {strategy_idx+1}/6: {strategy}")
+            
+            elif strategy == 'narrow_fwhm':
+                p0_trial = p0_current.copy()
+                for i in range(num_bright):
+                    gamma_current = p0_current[3*i + 2]
+                    gamma_new = gamma_current * 0.6
+                    # Ensure within bounds
+                    gamma_new = max(lower_bounds[3*i + 2], min(upper_bounds[3*i + 2], gamma_new))
+                    p0_trial[3*i + 2] = gamma_new
+                print(f"  Strategy {strategy_idx+1}/6: {strategy}")
+            
+            elif strategy == 'widen_fwhm':
+                p0_trial = p0_current.copy()
+                for i in range(num_bright):
+                    gamma_current = p0_current[3*i + 2]
+                    gamma_new = gamma_current * 1.5
+                    # Ensure within bounds
+                    gamma_new = max(lower_bounds[3*i + 2], min(upper_bounds[3*i + 2], gamma_new))
+                    p0_trial[3*i + 2] = gamma_new
+                print(f"  Strategy {strategy_idx+1}/6: {strategy}")
+            
+            elif strategy == 'random_explore':
+                p0_trial = p0_current.copy()
+                np.random.seed(iteration * 100 + 42)
+                for i in range(num_bright):
+                    # Random perturbation on amplitude
+                    c_current = p0_current[3*i]
+                    c_new = c_current * np.random.uniform(0.5, 1.5)
+                    c_new = max(lower_bounds[3*i], min(upper_bounds[3*i], c_new))
+                    p0_trial[3*i] = c_new
+                    
+                    # Random perturbation on position
+                    lam_current = p0_current[3*i + 1]
+                    lam_perturb = np.random.uniform(-5, 5)
+                    lam_new = lam_current + lam_perturb
+                    lam_new = max(lower_bounds[3*i + 1], min(upper_bounds[3*i + 1], lam_new))
+                    p0_trial[3*i + 1] = lam_new
+                    
+                    # Random perturbation on gamma
+                    gamma_current = p0_current[3*i + 2]
+                    gamma_new = gamma_current * np.random.uniform(0.7, 1.3)
+                    gamma_new = max(lower_bounds[3*i + 2], min(upper_bounds[3*i + 2], gamma_new))
+                    p0_trial[3*i + 2] = gamma_new
+                print(f"  Strategy {strategy_idx+1}/6: {strategy}")
+            
+            # ========================================
+            # Try fitting with this strategy
+            # ========================================
+            try:
+                popt, _ = curve_fit(
+                    fano_bright, 
+                    x_fit, 
+                    y_fit,
+                    p0=p0_trial,
+                    bounds=(lower_bounds, upper_bounds),
+                    maxfev=10000,
+                    method='trf'
+                )
+                
+                # Calculate R²
+                y_fit_curve = fano_bright(x_fit, *popt)
+                ss_res = np.sum((y_fit - y_fit_curve)**2)
+                ss_tot = np.sum((y_fit - y_fit.mean())**2)
+                r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+                
+                print(f"    R²={r2:.4f}")
+                
+                # Update iteration best
+                if r2 > iteration_best_r2:
+                    iteration_best_r2 = r2
+                    iteration_best_params = popt.copy()
+                    print(f"    → ITERATION BEST!")
+                
+                # Update global best
+                if r2 > global_best_r2:
+                    global_best_r2 = r2
+                    global_best_params = popt.copy()
+                    print(f"    → GLOBAL BEST!")
+                
+            except Exception as e:
+                print(f"    FAILED: {str(e)}")
+        
+        # Update starting point for next iteration
+        if iteration_best_params is not None:
+            p0_current = iteration_best_params.copy()
+        
+        # Early termination if excellent fit
+        if global_best_r2 > 0.99:
+            print(f"\n[Early termination] Excellent fit achieved (R² > 0.99)")
+            break
+    
+    # ========================================
+    # 5. Return best result or fallback
+    # ========================================
+    if global_best_params is not None:
         params = {}
         for i in range(num_bright):
-            params[f'bright{i+1}_c'] = popt[3*i]
-            params[f'bright{i+1}_lambda'] = popt[3*i + 1]
-            params[f'bright{i+1}_gamma'] = popt[3*i + 2]
+            params[f'bright{i+1}_c'] = global_best_params[3*i]
+            params[f'bright{i+1}_lambda'] = global_best_params[3*i + 1]
+            params[f'bright{i+1}_gamma'] = global_best_params[3*i + 2]
         
-        return y_fit_curve, params, r2
-        
-    except Exception as e:
-        print(f"[error] Bright-only fitting failed: {e}")
+        y_fit_curve = fano_bright(x_fit, *global_best_params)
+        return y_fit_curve, params, global_best_r2
+    
+    else:
+        # Fallback: All iterations failed
+        print(f"[error] Bright-only fitting failed in all iterations")
         params = {}
         for i in range(num_bright):
             params[f'bright{i+1}_c'] = 0
@@ -1107,7 +1271,8 @@ def fit_fano_with_dark(args: Dict[str, Any],
                        num_dark: int,
                        bright_guess: List[float],
                        dark_guess: List[float],
-                       params_bright: Dict[str, float]) -> Tuple[np.ndarray, Dict[str, float], float]:
+                       params_bright: Dict[str, float],
+                       max_iterations: int) -> Tuple[np.ndarray, Dict[str, float], float]:
     """
     Step 2: Fit bright + dark modes together
     WITH iterative refinement
@@ -1216,7 +1381,6 @@ def fit_fano_with_dark(args: Dict[str, Any],
     # ========================================
     # 4. Iterative fitting with multiple strategies
     # ========================================
-    max_iterations = args.get('FIT_MAX_ITERATIONS', 1)
     
     global_best_r2 = -np.inf
     global_best_params = None
