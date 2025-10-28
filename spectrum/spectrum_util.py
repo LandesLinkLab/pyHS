@@ -377,20 +377,26 @@ def fit_n_lorentz(args: Dict[str, Any],
             
             elif strategy == 'narrow_fwhm':
                 p0_trial = p0_current.copy()
+                bounds_trial_lower = lower_bounds.copy()
+                bounds_trial_upper = upper_bounds.copy()
                 for i in range(num_peaks):
                     c_current = p0_current[3*i + 2]
                     c_new = c_current * 0.6
                     c_new = max(lower_bounds[3*i + 2], min(upper_bounds[3*i + 2], c_new))
                     p0_trial[3*i + 2] = c_new
+                    bounds_trial_upper[3*i + 2] = min(c_current * 0.9, upper_bounds[3*i + 2])
                 print(f"  Strategy {strategy_idx+1}/{len(strategies)}: {strategy}")
-            
+
             elif strategy == 'widen_fwhm':
                 p0_trial = p0_current.copy()
+                bounds_trial_lower = lower_bounds.copy()
+                bounds_trial_upper = upper_bounds.copy()
                 for i in range(num_peaks):
                     c_current = p0_current[3*i + 2]
                     c_new = c_current * 1.5
                     c_new = max(lower_bounds[3*i + 2], min(upper_bounds[3*i + 2], c_new))
                     p0_trial[3*i + 2] = c_new
+                    bounds_trial_lower[3*i + 2] = max(c_current * 1.1, lower_bounds[3*i + 2])
                 print(f"  Strategy {strategy_idx+1}/{len(strategies)}: {strategy}")
             
             elif strategy == 'random_explore':
@@ -421,12 +427,18 @@ def fit_n_lorentz(args: Dict[str, Any],
             
             # Try fitting
             try:
+                # Use strategy-specific bounds if available
+                if strategy in ['narrow_fwhm', 'widen_fwhm']:
+                    use_bounds = (bounds_trial_lower, bounds_trial_upper)
+                else:
+                    use_bounds = (lower_bounds, upper_bounds)
+                
                 popt, _ = curve_fit(
                     lorentz_n, 
                     x_fit, 
                     y_fit, 
                     p0=p0_trial,
-                    bounds=(lower_bounds, upper_bounds),
+                    bounds=use_bounds,
                     maxfev=10000,
                     method='trf'
                 )
@@ -1127,20 +1139,32 @@ def fit_fano_bright_only(args: Dict[str, Any],
             
             elif strategy == 'narrow_fwhm':
                 p0_trial = p0_current.copy()
+                bounds_trial_lower = lower_bounds.copy()
+                bounds_trial_upper = upper_bounds.copy()
                 for i in range(num_bright):
                     gamma_current = p0_current[3*i + 2]
                     gamma_new = gamma_current * 0.6
+                    # Clamp to valid range
                     gamma_new = max(lower_bounds[3*i + 2], min(upper_bounds[3*i + 2], gamma_new))
                     p0_trial[3*i + 2] = gamma_new
+                    # Narrow the bounds dynamically for this strategy
+                    # This prevents optimizer from going back to upper bound
+                    bounds_trial_upper[3*i + 2] = min(gamma_current * 0.9, upper_bounds[3*i + 2])
                 print(f"  Strategy {strategy_idx+1}/6: {strategy}")
-            
+
             elif strategy == 'widen_fwhm':
                 p0_trial = p0_current.copy()
+                bounds_trial_lower = lower_bounds.copy()
+                bounds_trial_upper = upper_bounds.copy()
                 for i in range(num_bright):
                     gamma_current = p0_current[3*i + 2]
                     gamma_new = gamma_current * 1.5
+                    # Clamp to valid range
                     gamma_new = max(lower_bounds[3*i + 2], min(upper_bounds[3*i + 2], gamma_new))
                     p0_trial[3*i + 2] = gamma_new
+                    # Widen the bounds dynamically for this strategy
+                    # This prevents optimizer from staying at lower bound
+                    bounds_trial_lower[3*i + 2] = max(gamma_current * 1.1, lower_bounds[3*i + 2])
                 print(f"  Strategy {strategy_idx+1}/6: {strategy}")
             
             elif strategy == 'random_explore':
@@ -1166,12 +1190,18 @@ def fit_fano_bright_only(args: Dict[str, Any],
             
             # Try fitting
             try:
+                # Use strategy-specific bounds if available
+                if strategy in ['narrow_fwhm', 'widen_fwhm']:
+                    use_bounds = (bounds_trial_lower, bounds_trial_upper)
+                else:
+                    use_bounds = (lower_bounds, upper_bounds)
+                
                 popt, _ = curve_fit(
                     fano_bright, 
                     x_fit, 
                     y_fit,
                     p0=p0_trial,
-                    bounds=(lower_bounds, upper_bounds),
+                    bounds=use_bounds,  # ← strategy에 따라 다른 bounds 사용
                     maxfev=10000,
                     method='trf'
                 )
@@ -1407,22 +1437,30 @@ def fit_fano_with_dark(args: Dict[str, Any],
             
             elif strategy == 'narrow_fwhm':
                 p0_trial = p0_current.copy()
+                bounds_trial_lower = lower_bounds.copy()
+                bounds_trial_upper = upper_bounds.copy()
                 offset = 3 * num_bright
                 for j in range(num_dark):
                     Gamma_current = p0_current[offset + 4*j + 2]
                     Gamma_new = Gamma_current * 0.6
                     Gamma_new = max(lower_bounds[offset + 4*j + 2], min(upper_bounds[offset + 4*j + 2], Gamma_new))
                     p0_trial[offset + 4*j + 2] = Gamma_new
+                    # Narrow bounds for dark mode width
+                    bounds_trial_upper[offset + 4*j + 2] = min(Gamma_current * 0.9, upper_bounds[offset + 4*j + 2])
                 print(f"  Strategy {strategy_idx+1}/6: {strategy}")
-            
+
             elif strategy == 'widen_fwhm':
                 p0_trial = p0_current.copy()
+                bounds_trial_lower = lower_bounds.copy()
+                bounds_trial_upper = upper_bounds.copy()
                 offset = 3 * num_bright
                 for j in range(num_dark):
                     Gamma_current = p0_current[offset + 4*j + 2]
                     Gamma_new = Gamma_current * 1.5
                     Gamma_new = max(lower_bounds[offset + 4*j + 2], min(upper_bounds[offset + 4*j + 2], Gamma_new))
                     p0_trial[offset + 4*j + 2] = Gamma_new
+                    # Widen bounds for dark mode width
+                    bounds_trial_lower[offset + 4*j + 2] = max(Gamma_current * 1.1, lower_bounds[offset + 4*j + 2])
                 print(f"  Strategy {strategy_idx+1}/6: {strategy}")
             
             elif strategy == 'random_explore':
@@ -1454,12 +1492,18 @@ def fit_fano_with_dark(args: Dict[str, Any],
             
             # Try fitting
             try:
+                # Use strategy-specific bounds if available
+                if strategy in ['narrow_fwhm', 'widen_fwhm']:
+                    use_bounds = (bounds_trial_lower, bounds_trial_upper)
+                else:
+                    use_bounds = (lower_bounds, upper_bounds)
+                
                 popt, _ = curve_fit(
                     fano_full, 
                     x_fit, 
                     y_fit,
                     p0=p0_trial,
-                    bounds=(lower_bounds, upper_bounds),
+                    bounds=use_bounds,
                     maxfev=10000,
                     method='trf'
                 )
