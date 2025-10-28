@@ -91,8 +91,8 @@ args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions durin
 # ============================================================================
 # FITTING PARAMETERS - (used when FITTING_MODEL = 'fano')
 # ============================================================================
-args['FIT_BRIGHT_ITERATIONS'] = 50   # Step 1: Bright only iteration
-args['FIT_DARK_ITERATIONS'] = 10    # Step 2: Dark only iteration
+args['FIT_BRIGHT_ITERATIONS'] = 10   # Step 1: Bright only iteration
+args['FIT_DARK_ITERATIONS'] = 3    # Step 2: Dark only iteration
 
 # Bright modes (phase = 0 fixed)
 args['NUM_BRIGHT_MODES'] = 3  # Number of bright modes (non-interacting background)
@@ -104,10 +104,10 @@ args['BRIGHT_POSITION_TOLERANCE'] = [20, 20, 30]  # ±nm constraint for each bri
                                                # Example: [10, 20] → first ±10, second ±20
 
 # Dark modes (phase fitted)
-args['NUM_DARK_MODES'] = 0  # Number of dark modes (interacting resonances)
-args['DARK_INITIAL_GUESS'] = []  # Wavelengths in nm (REQUIRED, must be a list)
+args['NUM_DARK_MODES'] = 2  # Number of dark modes (interacting resonances)
+args['DARK_INITIAL_GUESS'] = [700, 850]  # Wavelengths in nm (REQUIRED, must be a list)
                                      # Example: [620] for one dark mode at 620 nm
-args['DARK_POSITION_TOLERANCE'] = []  # ±nm constraint for each dark peak
+args['DARK_POSITION_TOLERANCE'] = [3, 3]  # ±nm constraint for each dark peak
                                          # Can be a single value or list matching NUM_DARK_MODES
                                          
 # args['NUM_DARK_MODES'] = 2  # Number of dark modes (interacting resonances)
