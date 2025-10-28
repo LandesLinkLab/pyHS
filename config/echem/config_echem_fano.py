@@ -122,6 +122,7 @@ args['PRINT_EVERY'] = 100  # Print loss every N iterations
 args['REG_NEGATIVE_HEIGHT'] = 1.0       # Penalty for negative heights
 args['REG_WIDTH_MAX'] = 0.1             # Penalty for exceeding width constraints
 args['REG_POSITION_CONSTRAINT'] = 1.0   # Penalty for deviating from initial position
+args['REG_PHASE_CONSTRAINT'] = 0.5
 
 # ============================================================================
 # ELECTROCHEMICAL REFERENCE PARAMETERS

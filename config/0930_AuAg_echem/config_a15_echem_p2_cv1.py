@@ -59,22 +59,22 @@ args['FITTING_MODEL'] = 'fano'  # 'lorentzian' or 'fano'
 # ============================================================================
 
 # Bright modes (phase = 0 fixed)
-args['NUM_BRIGHT_MODES'] = 2  # Number of bright modes (non-interacting background)
-args['BRIGHT_POSITION_INITIAL_GUESS'] = [553, 730]  # Wavelengths in nm (REQUIRED, must be a list)
+args['NUM_BRIGHT_MODES'] = 3  # Number of bright modes (non-interacting background)
+args['BRIGHT_POSITION_INITIAL_GUESS'] = [571, 652, 720]  # Wavelengths in nm (REQUIRED, must be a list)
                                             # Example: [690, 565] for two bright peaks
-args['BRIGHT_WIDTH_INITIAL_GUESS'] = [70, 60]  # REQUIRED: list of widths in nm
+args['BRIGHT_WIDTH_INITIAL_GUESS'] = [80, 80, 100]  # REQUIRED: list of widths in nm
                                             # Example: [25, 35] for two bright modes
                                             # MUST be a list matching NUM_BRIGHT_MODES
 
-args['BRIGHT_HEIGHT_INITIAL_GUESS'] = [1.0, 0.8]  # ⚠️ NEW REQUIRED: list of coupling strengths
+args['BRIGHT_HEIGHT_INITIAL_GUESS'] = [0.5, 0.2, 1.1]  # ⚠️ NEW REQUIRED: list of coupling strengths
                                                    # Initial guess for c_i parameters
                                                    # MUST be a list matching NUM_BRIGHT_MODES
 
-args['BRIGHT_POSITION_TOLERANCE'] = [10, 10]  # ±nm constraint for each bright peak
+args['BRIGHT_POSITION_TOLERANCE'] = [30, 30, 30]  # ±nm constraint for each bright peak
                                                # Can be a single value or list matching NUM_BRIGHT_MODES
                                                # Example: 10 → all peaks ±10 nm
                                                # Example: [10, 20] → first ±10, second ±20
-args['BRIGHT_WIDTH_MAX'] = [100, 70]  # Maximum width (gamma) for bright modes in nm
+args['BRIGHT_WIDTH_MAX'] = [150, 100, 100]  # Maximum width (gamma) for bright modes in nm
                                   # None: uses FANO_GAMMA_RANGE upper bound (100)
                                   # Number: constrains all bright modes (e.g., 80)
                                   # This prevents bright mode width from becoming too large                                               
@@ -82,22 +82,22 @@ args['BRIGHT_WIDTH_MAX'] = [100, 70]  # Maximum width (gamma) for bright modes i
 # Dark modes (phase fitted)
 args['NUM_DARK_MODES'] = 1  # Number of dark modes (interacting resonances)
 
-args['DARK_POSITION_INITIAL_GUESS'] = [746]  # Wavelengths in nm (REQUIRED, must be a list)
+args['DARK_POSITION_INITIAL_GUESS'] = [737]  # Wavelengths in nm (REQUIRED, must be a list)
                                      # Example: [620] for one dark mode at 620 nm
-args['DARK_WIDTH_INITIAL_GUESS'] = [20]  # REQUIRED: list of widths in nm
+args['DARK_WIDTH_INITIAL_GUESS'] = [30]  # REQUIRED: list of widths in nm
                                           # Example: [40] for one dark mode
                                           # MUST be a list matching NUM_DARK_MODES
 
-args['DARK_HEIGHT_INITIAL_GUESS'] = [0.5]  # ⚠️ NEW REQUIRED: list of coupling strengths d_j
+args['DARK_HEIGHT_INITIAL_GUESS'] = [0.3]  # ⚠️ NEW REQUIRED: list of coupling strengths d_j
                                             # MUST be a list matching NUM_DARK_MODES
 
-args['DARK_PHASE_INITIAL_GUESS'] = [0.0]  # ⚠️ NEW OPTIONAL: list of phases θ_j (radians)
+args['DARK_PHASE_INITIAL_GUESS'] = [np.pi]  # ⚠️ NEW OPTIONAL: list of phases θ_j (radians)
                                            # Default: [0.0] for all dark modes
                                            # MUST be a list matching NUM_DARK_MODES
 
 args['DARK_POSITION_TOLERANCE'] = [10]  # ±nm constraint for each dark peak
                                          # Can be a single value or list matching NUM_DARK_MODES
-args['DARK_WIDTH_MAX'] = [40]  # Maximum width (Gamma) for dark modes in nm
+args['DARK_WIDTH_MAX'] = [60]  # Maximum width (Gamma) for dark modes in nm
                                 # None: uses FANO_GAMMA_RANGE upper bound (100)
                                 # Number: constrains all dark modes (e.g., 60)
                                 # This prevents dark mode width from becoming too large
@@ -114,12 +114,12 @@ args['OPTIMIZER'] = 'RAdam'  # 'RAdam', 'Adam', 'NAdam'
 
 # Two-stage fitting (Fano specific)
 # Stage 1: Fit bright modes only
-args['LEARNING_RATE_BRIGHT'] = 0.01
-args['NUM_ITERATIONS_BRIGHT'] = 1000
+args['LEARNING_RATE_BRIGHT'] = 0.001
+args['NUM_ITERATIONS_BRIGHT'] = 1
 
 # Stage 2: Add dark modes
 args['LEARNING_RATE_DARK'] = 0.001
-args['NUM_ITERATIONS_DARK'] = 1000
+args['NUM_ITERATIONS_DARK'] = 3000
 
 # Progress reporting
 args['PRINT_EVERY'] = 100  # Print loss every N iterations
@@ -130,12 +130,9 @@ args['PRINT_EVERY'] = 100  # Print loss every N iterations
 
 # Penalty for negative heights (should be positive)
 args['REG_NEGATIVE_HEIGHT'] = 1.0
-
-# Penalty for exceeding width constraints
 args['REG_WIDTH_MAX'] = 0.1
-
-# Penalty for deviating from initial position guess
 args['REG_POSITION_CONSTRAINT'] = 1.0
+args['REG_PHASE_CONSTRAINT'] = 100.0
 
 # ============================================================================
 # ELECTROCHEMICAL REFERENCE PARAMETERS

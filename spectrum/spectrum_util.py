@@ -127,75 +127,6 @@ class LorentzianFitter:
         
         return positions, widths, heights
     
-    def compute_regularization(self,
-                              positions: torch.Tensor,
-                              widths: torch.Tensor,
-                              heights: torch.Tensor,
-                              pos_init: torch.Tensor) -> torch.Tensor:
-        """
-        Compute regularization losses for soft constraints
-        
-        Parameters:
-        -----------
-        positions : torch.Tensor, shape (N_batch, N_peaks)
-        widths : torch.Tensor, shape (N_batch, N_peaks)
-        heights : torch.Tensor, shape (N_batch, N_peaks)
-        pos_init : torch.Tensor, shape (N_batch, N_peaks)
-        
-        Returns:
-        --------
-        torch.Tensor, scalar
-            Total regularization loss
-        """
-        reg_loss = torch.tensor(0.0, device=self.device)
-        
-        # 1. Negative height penalty
-        reg_height = self.args.get('REG_NEGATIVE_HEIGHT', 1.0)
-        if reg_height > 0:
-            negative_heights = torch.relu(-heights)  # Only penalize if < 0
-            reg_loss = reg_loss + reg_height * negative_heights.pow(2).sum()
-        
-        # 2. Width maximum constraint (soft)
-        width_max = self.args.get('PEAK_WIDTH_MAX', None)
-        reg_width_max = self.args.get('REG_WIDTH_MAX', 0.1)
-        if width_max is not None and reg_width_max > 0:
-            if isinstance(width_max, (list, tuple)):
-                width_max_tensor = torch.tensor(width_max, dtype=torch.float32, device=self.device)
-                width_max_tensor = width_max_tensor.unsqueeze(0).expand_as(widths)
-            else:
-                width_max_tensor = torch.tensor(width_max, dtype=torch.float32, device=self.device)
-            
-            excess_width = torch.relu(widths - width_max_tensor)
-            reg_loss = reg_loss + reg_width_max * excess_width.pow(2).sum()
-        
-        # 3. Position constraint (stay within tolerance of initial guess)
-        pos_tol = self.args.get('PEAK_POSITION_TOLERANCE', None)
-        reg_pos = self.args.get('REG_POSITION_CONSTRAINT', 1.0)
-        if pos_tol is not None and reg_pos > 0:
-            if isinstance(pos_tol, (list, tuple)):
-                pos_tol_tensor = torch.tensor(pos_tol, dtype=torch.float32, device=self.device)
-                pos_tol_tensor = pos_tol_tensor.unsqueeze(0).expand_as(positions)
-            else:
-                pos_tol_tensor = torch.tensor(pos_tol, dtype=torch.float32, device=self.device)
-            
-            pos_deviation = torch.abs(positions - pos_init)
-            excess_deviation = torch.relu(pos_deviation - pos_tol_tensor)
-            reg_loss = reg_loss + reg_pos * excess_deviation.pow(2).sum()
-        
-        # 4. Multi-peak: minimum distance between peaks
-        if self.num_peaks >= 2:
-            min_distance = self.args.get('PEAK_MIN_DISTANCE', None)
-            reg_distance = self.args.get('REG_PEAK_DISTANCE', 0.01)
-            if min_distance is not None and reg_distance > 0:
-                # For each pair of peaks, check distance
-                for i in range(self.num_peaks):
-                    for j in range(i + 1, self.num_peaks):
-                        distance = torch.abs(positions[:, i] - positions[:, j])
-                        violation = torch.relu(min_distance - distance)
-                        reg_loss = reg_loss + reg_distance * violation.pow(2).sum()
-        
-        return reg_loss
-    
     def fit(self, 
             spectra: np.ndarray,
             wavelengths: np.ndarray) -> Tuple[np.ndarray, List[Dict], np.ndarray]:
@@ -273,7 +204,7 @@ class LorentzianFitter:
             mse_loss = (fitted - spectra_tensor).pow(2).mean()
             
             # Regularization
-            reg_loss = self.compute_regularization(positions, widths, heights, pos_init)
+            reg_loss = self.compute_regularization(positions, widths, heights, pos_init, dark_d, dark_pos, dark_Gamma, dark_pos_init, dark_theta, dark_theta_init)
             
             # Total loss
             total_loss = mse_loss + reg_loss
@@ -484,9 +415,20 @@ class FanoFitter:
         
         return bright_c, bright_pos, bright_gamma, dark_d, dark_pos, dark_Gamma, dark_theta
     
-    def compute_regularization(self, bright_c, bright_pos, bright_gamma, bright_pos_init,
-                              dark_d, dark_pos, dark_Gamma, dark_pos_init) -> torch.Tensor:
-        """Compute regularization for Fano fitting"""
+    
+    def compute_regularization(self, 
+                              bright_c, bright_pos, bright_gamma, bright_pos_init,
+                              dark_d, dark_pos, dark_Gamma, dark_pos_init, 
+                              dark_theta, dark_theta_init) -> torch.Tensor:
+        """
+        Compute regularization for Fano fitting
+        
+        Supports:
+        - Negative height penalty
+        - Width maximum constraints
+        - Position tolerance constraints
+        - Phase constraint (NEW! - controlled by REG_PHASE_CONSTRAINT)
+        """
         reg_loss = torch.tensor(0.0, device=self.device)
         
         # 1. Negative height penalty (bright and dark)
@@ -497,7 +439,7 @@ class FanoFitter:
             if self.num_dark > 0:
                 reg_loss = reg_loss + reg_height * torch.relu(-dark_d).pow(2).sum()
         
-        # 2. Width constraints
+        # 2. Width maximum constraints
         reg_width_max = self.args.get('REG_WIDTH_MAX', 0.1)
         
         # Bright width max
@@ -505,12 +447,12 @@ class FanoFitter:
             bright_width_max = self.args.get('BRIGHT_WIDTH_MAX', None)
             if bright_width_max is not None and reg_width_max > 0:
                 if isinstance(bright_width_max, (list, tuple)):
-                    bright_max_tensor = torch.tensor(bright_width_max, dtype=torch.float32, device=self.device)
-                    bright_max_tensor = bright_max_tensor.unsqueeze(0).expand_as(bright_gamma)
+                    width_max_tensor = torch.tensor(bright_width_max, dtype=torch.float32, device=self.device)
+                    width_max_tensor = width_max_tensor.unsqueeze(0).expand_as(bright_gamma)
                 else:
-                    bright_max_tensor = torch.tensor(bright_width_max, dtype=torch.float32, device=self.device)
+                    width_max_tensor = torch.tensor(bright_width_max, dtype=torch.float32, device=self.device)
                 
-                excess = torch.relu(bright_gamma - bright_max_tensor)
+                excess = torch.relu(bright_gamma - width_max_tensor)
                 reg_loss = reg_loss + reg_width_max * excess.pow(2).sum()
         
         # Dark width max
@@ -518,15 +460,15 @@ class FanoFitter:
             dark_width_max = self.args.get('DARK_WIDTH_MAX', None)
             if dark_width_max is not None and reg_width_max > 0:
                 if isinstance(dark_width_max, (list, tuple)):
-                    dark_max_tensor = torch.tensor(dark_width_max, dtype=torch.float32, device=self.device)
-                    dark_max_tensor = dark_max_tensor.unsqueeze(0).expand_as(dark_Gamma)
+                    width_max_tensor = torch.tensor(dark_width_max, dtype=torch.float32, device=self.device)
+                    width_max_tensor = width_max_tensor.unsqueeze(0).expand_as(dark_Gamma)
                 else:
-                    dark_max_tensor = torch.tensor(dark_width_max, dtype=torch.float32, device=self.device)
+                    width_max_tensor = torch.tensor(dark_width_max, dtype=torch.float32, device=self.device)
                 
-                excess = torch.relu(dark_Gamma - dark_max_tensor)
+                excess = torch.relu(dark_Gamma - width_max_tensor)
                 reg_loss = reg_loss + reg_width_max * excess.pow(2).sum()
         
-        # 3. Position constraints
+        # 3. Position tolerance constraints
         reg_pos = self.args.get('REG_POSITION_CONSTRAINT', 1.0)
         
         # Bright position tolerance
@@ -556,6 +498,15 @@ class FanoFitter:
                 deviation = torch.abs(dark_pos - dark_pos_init)
                 excess = torch.relu(deviation - tol_tensor)
                 reg_loss = reg_loss + reg_pos * excess.pow(2).sum()
+        
+        # 🔧 4. Phase constraint (CRITICAL FOR args['REG_PHASE_CONSTRAINT'] = 0.5)
+        if self.num_dark > 0:
+            reg_phase = self.args.get('REG_PHASE_CONSTRAINT', 0.0)
+            if reg_phase > 0:
+                # Wrap phase deviation to [-π, π] for proper periodic boundary
+                phase_deviation = dark_theta - dark_theta_init
+                phase_deviation = torch.atan2(torch.sin(phase_deviation), torch.cos(phase_deviation))
+                reg_loss = reg_loss + reg_phase * phase_deviation.pow(2).sum()
         
         return reg_loss
     
@@ -587,6 +538,7 @@ class FanoFitter:
         
         bright_pos_init = bright_pos.clone()
         dark_pos_init = dark_pos.clone()
+        dark_theta_init = dark_theta.clone()  # For phase constraint
         
         # ====================
         # STAGE 1: Bright modes only
@@ -625,7 +577,8 @@ class FanoFitter:
             mse_loss = (fitted - spectra_tensor).pow(2).mean()
             reg_loss = self.compute_regularization(
                 bright_c_param, bright_pos_param, bright_gamma_param, bright_pos_init,
-                torch.zeros_like(dark_d), dark_pos, dark_Gamma, dark_pos_init
+                torch.zeros_like(dark_d), dark_pos, dark_Gamma, dark_pos_init,
+                dark_theta, dark_theta_init  # Phase parameters (not used in Stage 1)
             )
             
             total_loss = mse_loss + reg_loss
@@ -642,39 +595,61 @@ class FanoFitter:
         if self.num_dark > 0:
             print("[info] Stage 2: Adding dark modes...")
             
-            # Fix bright modes, optimize dark modes
-            bright_c_fixed = bright_c_param.detach().clone()
-            bright_pos_fixed = bright_pos_param.detach().clone()
-            bright_gamma_fixed = bright_gamma_param.detach().clone()
+            # Bright를 Parameter로 변환 (Stage 2에서도 최적화, but 천천히)
+            bright_c_param_stage2 = nn.Parameter(bright_c_param.detach().clone())
+            bright_pos_param_stage2 = nn.Parameter(bright_pos_param.detach().clone())
+            bright_gamma_param_stage2 = nn.Parameter(bright_gamma_param.detach().clone())
             
+            # Dark 파라미터
             dark_d_param = nn.Parameter(dark_d)
             dark_pos_param = nn.Parameter(dark_pos)
             dark_Gamma_param = nn.Parameter(dark_Gamma)
             dark_theta_param = nn.Parameter(dark_theta)
             
+            # Learning rates: Bright는 Dark의 1/100 (자동 계산)
             lr_dark = self.args.get('LEARNING_RATE_DARK', 0.001)
+            lr_bright_stage2 = lr_dark / 10.0  # 🔧 자동으로 Dark의 1/100
             num_iter_dark = self.args.get('NUM_ITERATIONS_DARK', 1000)
             
+            print(f"[info] Stage 2 LR: Dark={lr_dark:.6f}, Bright={lr_bright_stage2:.6f} (Dark/10)")
+            
+            # Optimizer with separate learning rates
             if optimizer_name == 'RAdam':
-                optimizer = torch.optim.RAdam([dark_d_param, dark_pos_param, dark_Gamma_param, dark_theta_param], lr=lr_dark)
+                optimizer = torch.optim.RAdam([
+                    {'params': [bright_c_param_stage2, bright_pos_param_stage2, bright_gamma_param_stage2], 
+                     'lr': lr_bright_stage2},
+                    {'params': [dark_d_param, dark_pos_param, dark_Gamma_param, dark_theta_param], 
+                     'lr': lr_dark}
+                ])
             elif optimizer_name == 'Adam':
-                optimizer = torch.optim.Adam([dark_d_param, dark_pos_param, dark_Gamma_param, dark_theta_param], lr=lr_dark)
+                optimizer = torch.optim.Adam([
+                    {'params': [bright_c_param_stage2, bright_pos_param_stage2, bright_gamma_param_stage2], 
+                     'lr': lr_bright_stage2},
+                    {'params': [dark_d_param, dark_pos_param, dark_Gamma_param, dark_theta_param], 
+                     'lr': lr_dark}
+                ])
             elif optimizer_name == 'NAdam':
-                optimizer = torch.optim.NAdam([dark_d_param, dark_pos_param, dark_Gamma_param, dark_theta_param], lr=lr_dark)
+                optimizer = torch.optim.NAdam([
+                    {'params': [bright_c_param_stage2, bright_pos_param_stage2, bright_gamma_param_stage2], 
+                     'lr': lr_bright_stage2},
+                    {'params': [dark_d_param, dark_pos_param, dark_Gamma_param, dark_theta_param], 
+                     'lr': lr_dark}
+                ])
             
             for iteration in range(num_iter_dark):
                 optimizer.zero_grad()
                 
                 fitted = self.fano_function(
                     wl_tensor,
-                    bright_c_fixed, bright_pos_fixed, bright_gamma_fixed,
+                    bright_c_param_stage2, bright_pos_param_stage2, bright_gamma_param_stage2,  # ✅ Parameter로 변경
                     dark_d_param, dark_pos_param, dark_Gamma_param, dark_theta_param
                 )
                 
                 mse_loss = (fitted - spectra_tensor).pow(2).mean()
                 reg_loss = self.compute_regularization(
-                    bright_c_fixed, bright_pos_fixed, bright_gamma_fixed, bright_pos_init,
-                    dark_d_param, dark_pos_param, dark_Gamma_param, dark_pos_init
+                    bright_c_param_stage2, bright_pos_param_stage2, bright_gamma_param_stage2, bright_pos_init,  # ✅ 변경
+                    dark_d_param, dark_pos_param, dark_Gamma_param, dark_pos_init,
+                    dark_theta_param, dark_theta_init  # 🔧 Phase constraint ACTIVE here!
                 )
                 
                 total_loss = mse_loss + reg_loss
@@ -685,10 +660,10 @@ class FanoFitter:
                     print(f"[info] Dark Stage {iteration + 1}/{num_iter_dark}: "
                           f"MSE={mse_loss.item():.6e}, Reg={reg_loss.item():.6e}")
             
-            # Use final parameters
-            bright_c_final = bright_c_fixed
-            bright_pos_final = bright_pos_fixed
-            bright_gamma_final = bright_gamma_fixed
+            # Use final parameters (Stage 2에서 수정된 값 사용)
+            bright_c_final = bright_c_param_stage2
+            bright_pos_final = bright_pos_param_stage2
+            bright_gamma_final = bright_gamma_param_stage2
             dark_d_final = dark_d_param
             dark_pos_final = dark_pos_param
             dark_Gamma_final = dark_Gamma_param
@@ -856,23 +831,24 @@ def plot_spectrum(wavelengths: np.ndarray,
                   args: Optional[Dict[str, Any]] = None,
                   show_fit: bool = True):
     """
-    Plot spectrum with fitted curve
+    Plot spectrum with fitted curve and individual Fano components
     
-    This function is kept unchanged for compatibility
+    Colors:
+    - Data: blue dots
+    - Total fit: black dashed line
+    - Bright modes: green
+    - Dark modes: red
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Get output unit
+    # Get settings
     output_unit = args.get('OUTPUT_UNIT', 'eV') if args else 'eV'
     x_label = 'Energy (eV)' if output_unit == 'eV' else 'Wavelength (nm)'
-    
-    # Get fitting model
     fitting_model = args.get('FITTING_MODEL', 'lorentzian') if args else 'lorentzian'
     
     # Convert to eV if needed
     if output_unit == 'eV':
         x_plot = 1239.842 / wavelengths
-        # Sort by increasing energy
         sort_idx = np.argsort(x_plot)
         x_plot = x_plot[sort_idx]
         spectrum = spectrum[sort_idx]
@@ -880,40 +856,103 @@ def plot_spectrum(wavelengths: np.ndarray,
             fit = fit[sort_idx]
     else:
         x_plot = wavelengths
+        sort_idx = np.arange(len(wavelengths))
     
-    # Plot
-    ax.plot(x_plot, spectrum, 'o-', markersize=2, linewidth=1, label='Data', alpha=0.7)
+    # Plot data
+    ax.plot(x_plot, spectrum, 'o', markersize=3, color='tab:blue', label='Data', alpha=0.6)
     
-    if show_fit:
-        ax.plot(x_plot, fit, 'r-', linewidth=2, label='Fit')
+    if show_fit and fit is not None:
+        # Plot total fit
+        ax.plot(x_plot, fit, 'k--', linewidth=2, label='Total Fit', alpha=0.8)
+        
+        # Plot individual components for Fano model
+        if fitting_model == 'fano' and params is not None:
+            # Count modes
+            num_bright = sum(1 for key in params.keys() if 'bright' in key and '_lambda' in key)
+            num_dark = sum(1 for key in params.keys() if 'dark' in key and '_lambda' in key)
+            
+            # Plot bright modes (GREEN)
+            for i in range(1, num_bright + 1):
+                c = params.get(f'bright{i}_c', 0)
+                lam = params.get(f'bright{i}_lambda', 0)
+                gamma = params.get(f'bright{i}_gamma', 0)
+                
+                if c != 0 and lam > 0 and gamma > 0:
+                    # Calculate bright mode intensity
+                    wl_nm = wavelengths
+                    A_bright = c * (gamma/2) / (wl_nm - lam + 1j*gamma/2)
+                    I_bright = np.abs(A_bright)**2
+                    
+                    # Sort if eV
+                    if output_unit == 'eV':
+                        I_bright = I_bright[sort_idx]
+                    
+                    ax.plot(x_plot, I_bright, '-', linewidth=1.5, color='green',
+                           label=f'Bright {i}', alpha=0.7)
+            
+            # Plot dark modes (RED)
+            for j in range(1, num_dark + 1):
+                d = params.get(f'dark{j}_d', 0)
+                lam = params.get(f'dark{j}_lambda', 0)
+                Gamma = params.get(f'dark{j}_Gamma', 0)
+                theta = params.get(f'dark{j}_theta', 0)
+                
+                if d != 0 and lam > 0 and Gamma > 0:
+                    # Calculate dark mode intensity
+                    wl_nm = wavelengths
+                    A_dark = d * np.exp(1j*theta) * (Gamma/2) / (wl_nm - lam + 1j*Gamma/2)
+                    I_dark = np.abs(A_dark)**2
+                    
+                    # Sort if eV
+                    if output_unit == 'eV':
+                        I_dark = I_dark[sort_idx]
+                    
+                    ax.plot(x_plot, I_dark, '-', linewidth=1.5, color='red',
+                           label=f'Dark {j}', alpha=0.7)
     
     ax.set_xlabel(x_label, fontsize=12)
     ax.set_ylabel('Intensity (a.u.)', fontsize=12)
     ax.set_title(title, fontsize=14)
-    ax.legend()
+    ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
     
-    # Add parameter text if provided
+    # Add parameter text
     if params is not None and show_fit:
         param_text = ""
         
         if fitting_model == 'lorentzian':
-            num_peaks = sum(1 for key in params.keys() if key.startswith('b'))
+            num_peaks = sum(1 for key in params.keys() if key.startswith('b') and not 'right' in key)
             for i in range(1, num_peaks + 1):
                 if f'b{i}' in params:
-                    param_text += f"Peak {i}: λ={params[f'b{i}']:.1f} nm, FWHM={params[f'c{i}']:.1f} nm\n"
+                    # 🔧 Intensity 정보 추가
+                    a = params.get(f'a{i}', 0)
+                    param_text += f"Peak {i}: λ={params[f'b{i}']:.1f} nm, FWHM={params[f'c{i}']:.1f} nm, I={a:.2f}\n"
         
         elif fitting_model == 'fano':
-            num_bright = sum(1 for key in params.keys() if 'bright' in key and 'lambda' in key)
+            num_bright = sum(1 for key in params.keys() if 'bright' in key and '_lambda' in key)
             for i in range(1, num_bright + 1):
                 if f'bright{i}_lambda' in params:
-                    param_text += f"Bright {i}: λ={params[f'bright{i}_lambda']:.1f} nm, γ={params[f'bright{i}_gamma']:.1f} nm\n"
+                    # 🔧 Intensity (coupling) 정보 추가
+                    c = params.get(f'bright{i}_c', 0)
+                    param_text += f"Bright {i}: λ={params[f'bright{i}_lambda']:.1f} nm, γ={params[f'bright{i}_gamma']:.1f} nm, c={c:.2f}\n"
+            
+            num_dark = sum(1 for key in params.keys() if 'dark' in key and '_lambda' in key)
+            if num_dark > 0:
+                param_text += "\n"
+                for j in range(1, num_dark + 1):
+                    if f'dark{j}_lambda' in params:
+                        # 🔧 Intensity (d)와 Phase (θ) 정보 추가
+                        d = params.get(f'dark{j}_d', 0)
+                        theta = params.get(f'dark{j}_theta', 0)
+                        theta_pi = theta / np.pi  # radian → degree
+                        param_text += f"Dark {j}: λ={params[f'dark{j}_lambda']:.1f} nm, Γ={params[f'dark{j}_Gamma']:.1f} nm\n"
+                        param_text += f"        d={d:.2f}, θ={theta_pi:.2f} π \n"
         
         if param_text:
-            ax.text(0.02, 0.98, param_text, transform=ax.transAxes,
+            ax.text(0.02, 0.98, param_text.strip(), transform=ax.transAxes,
                    verticalalignment='top', fontsize=9,
                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout()
     fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
-    plt.close(fig)
+    plt.close(fig)  # 🔧 메모리 누수 방지!

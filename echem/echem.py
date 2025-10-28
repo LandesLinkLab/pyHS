@@ -1,5 +1,6 @@
 import os
 import sys
+import gc
 import numpy as np
 import pickle as pkl
 from pathlib import Path
@@ -191,7 +192,6 @@ class EChemAnalyzer:
                     'fwhm': fwhm_ev,
                     'r2': r2
                 })
-                continue
             
             # Quality Filter 2: Width limit (in eV)
             if fwhm_ev > max_width:
@@ -205,7 +205,6 @@ class EChemAnalyzer:
                     'fwhm': fwhm_ev,
                     'r2': r2
                 })
-                continue
             
             # Quality Filter 3: R² threshold
             if r2 < min_r2:
@@ -219,7 +218,10 @@ class EChemAnalyzer:
                     'fwhm': fwhm_ev,
                     'r2': r2
                 })
-                continue
+
+            else:
+                # Quality check 통과
+                stats['accepted'] += 1
             
             # Compute SNR
             peak_intensity = spectrum.max()
@@ -277,8 +279,15 @@ class EChemAnalyzer:
             params['spectrum'] = spectrum
             params['fit'] = fitted
             
-            # Accepted!
+            # Accept this fit
             stats['accepted'] += 1
+
+            # 🔧 index와 메타데이터 추가
+            params['index'] = original_idx
+            params['time'] = self.dataset.spec_times[original_idx]
+            params['voltage'] = self.dataset.voltages[original_idx]
+            params['r2'] = r2
+
             self.fitted_params.append(params)
             
             if (original_idx + 1) % 100 == 0:
@@ -291,10 +300,11 @@ class EChemAnalyzer:
         print("FITTING STATISTICS")
         print("="*60)
         print(f"Total spectra: {stats['total']}")
-        print(f"Accepted fits: {stats['accepted']}")
-        print(f"Rejected (negative R²): {stats['rejected_negative_r2']}")
-        print(f"Rejected (width): {stats['rejected_width']}")
-        print(f"Rejected (R² threshold): {stats['rejected_fitting']}")
+        print(f"Good quality fits: {stats['accepted']}")
+        print(f"Low quality (negative R²): {stats['rejected_negative_r2']}")
+        print(f"Low quality (width): {stats['rejected_width']}")
+        print(f"Low quality (R² threshold): {stats['rejected_fitting']}")
+        print(f"\nAll {len(self.fitted_params)} fitted spectra will be used for analysis")
         print("="*60)
     
     def convert_fwhm_ev_to_nm(self, peak_ev: float, fwhm_ev: float) -> float:
@@ -504,9 +514,9 @@ class EChemAnalyzer:
                     return (2*a/np.pi) * (c / (4*(x-b)**2 + c**2))
                 
                 for i, param in enumerate(self.fitted_params):
-                    a = param['params'].get(f'a{peak_idx+1}', 0)
-                    b = param['params'].get(f'b{peak_idx+1}', 0)
-                    c = param['params'].get(f'c{peak_idx+1}', 0)
+                    a = param.get(f'a{peak_idx+1}', 0)
+                    b = param.get(f'b{peak_idx+1}', 0)
+                    c = param.get(f'c{peak_idx+1}', 0)
                     
                     if b > 0:  # Valid peak
                         peak_spectra_reconstructed[i, :] = lorentz_single_peak(self.dataset.wavelengths, a, b, c)
@@ -520,9 +530,9 @@ class EChemAnalyzer:
                     return I
                 
                 for i, param in enumerate(self.fitted_params):
-                    c = param['params'].get(f'bright{peak_idx+1}_c', 0)
-                    lam = param['params'].get(f'bright{peak_idx+1}_lambda', 0)
-                    gamma = param['params'].get(f'bright{peak_idx+1}_gamma', 0)
+                    c = param.get(f'bright{peak_idx+1}_c', 0)
+                    lam = param.get(f'bright{peak_idx+1}_lambda', 0)
+                    gamma = param.get(f'bright{peak_idx+1}_gamma', 0)
                     
                     if lam > 0 and gamma > 0:  # Valid bright mode
                         peak_spectra_reconstructed[i, :] = fano_single_bright(self.dataset.wavelengths, c, lam, gamma)
@@ -757,10 +767,10 @@ class EChemAnalyzer:
                     return I
                 
                 for i, param in enumerate(self.fitted_params):
-                    d = param['params'].get(f'dark{dark_idx+1}_d', 0)
-                    lam = param['params'].get(f'dark{dark_idx+1}_lambda', 0)
-                    Gamma = param['params'].get(f'dark{dark_idx+1}_Gamma', 0)
-                    theta = param['params'].get(f'dark{dark_idx+1}_theta', 0)
+                    d = param.get(f'dark{dark_idx+1}_d', 0)
+                    lam = param.get(f'dark{dark_idx+1}_lambda', 0)
+                    Gamma = param.get(f'dark{dark_idx+1}_Gamma', 0)
+                    theta = param.get(f'dark{dark_idx+1}_theta', 0)
                     
                     if lam > 0 and Gamma > 0:  # Valid dark mode
                         dark_spectra_reconstructed[i, :] = fano_single_dark(self.dataset.wavelengths, d, lam, Gamma, theta)
@@ -1029,7 +1039,7 @@ class EChemAnalyzer:
                 plot_title,
                 plot_path,
                 dpi=self.args.get("FIG_DPI", 300),
-                params=param['params'],
+                params=param,
                 snr=param['snr'],
                 args=self.args,
                 show_fit=True
@@ -1052,6 +1062,10 @@ class EChemAnalyzer:
             
             if (i + 1) % 10 == 0 or (i + 1) == len(self.fitted_params):
                 print(f"  Saved {i+1}/{len(self.fitted_params)} spectra (text + 2 plots)")
+
+            if (i + 1) % 10 == 0:
+                gc.collect()  # 가비지 컬렉션 실행
+                plt.close('all')  # 모든 matplotlib figure 닫기                
         
         print(f"[info] Saved {len(self.fitted_params)} spectral files to {output_dir}")
         print(f"[info] Saved {len(self.fitted_params)} plots with fit to {plots_dir}")
@@ -1061,9 +1075,16 @@ class EChemAnalyzer:
         """Save analysis results to pickle file"""
         print("\n[Step] Saving analysis results...")
         
+        # 🔧 수정: 스펙트럼 데이터 제거 (메모리 절약)
+        fitted_params_light = []
+        for p in self.fitted_params:
+            # spectrum과 fit 배열 제외
+            p_light = {k: v for k, v in p.items() if k not in ['spectrum', 'fit']}
+            fitted_params_light.append(p_light)
+        
         results = {
             'args': self.args,
-            'fitted_params': self.fitted_params,
+            'fitted_params': fitted_params_light,  # 🔧 가벼운 버전
             'rejected_fits': self.rejected_fits,
             'cycles': self.cycles,
             'cycle_boundaries': self.cycle_boundaries,
