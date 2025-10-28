@@ -70,16 +70,13 @@ class EChemAnalyzer:
 
     def fit_all_spectra(self):
         """
-        Fit models to all time-point spectra using BATCH PROCESSING
+        Fit Lorentzian function to all time-point spectra
         
-        Key changes:
-        - Fit all spectra in a single batch
-        - Use PyTorch-based batch fitting
-        - Apply quality filters after batch fitting
-        - Temporal information is preserved through batch indexing
+        This uses the same Lorentzian fitting but applied to time-series data
+        instead of spatial pixels.
         """
-        print("\n[Step] Fitting all time-point spectra (BATCH MODE)...")
-        
+        print("\n[Step] Fitting Lorentzian to all time-point spectra...")
+
         fitting_model = self.args.get('FITTING_MODEL')
         print(f"[info] Using fitting model: {fitting_model}")
         
@@ -99,18 +96,11 @@ class EChemAnalyzer:
             'accepted': 0
         }
         
-        # ========================================
-        # STEP 1: Validate and prepare spectra
-        # ========================================
-        print("[info] Step 1: Validating spectra...")
-        
-        valid_indices = []
-        valid_spectra = []
-        
+        # Fit each spectrum
         for i in range(n_spectra):
             spectrum = self.dataset.spectra[i, :]
             
-            # Skip invalid spectra
+            # Skip if spectrum is invalid
             if spectrum.max() < 0.01 or np.any(spectrum < 0):
                 print(f"  Spectrum {i}: Skipped (invalid data)")
                 self.rejected_fits.append({
@@ -122,58 +112,25 @@ class EChemAnalyzer:
                     'r2': 0
                 })
                 continue
-            
-            valid_indices.append(i)
-            valid_spectra.append(spectrum)
-        
-        if len(valid_spectra) == 0:
-            print("[warning] No valid spectra to fit")
-            return
-        
-        # Convert to numpy array
-        valid_spectra = np.array(valid_spectra)  # shape: (N_valid, N_wavelengths)
-        print(f"[info] {len(valid_spectra)} valid spectra prepared for batch fitting")
-        
-        # ========================================
-        # STEP 2: Batch fitting
-        # ========================================
-        print("[info] Step 2: Batch fitting all valid spectra...")
-        
-        use_gpu = self.args.get('USE_GPU', False)
-        
-        if fitting_model == 'fano':
-            fitted_spectra, params_list, r2_scores = su.fit_fano_batch(
-                self.args, valid_spectra, wavelengths, use_gpu=use_gpu
-            )
-        elif fitting_model == 'lorentzian':
-            fitted_spectra, params_list, r2_scores = su.fit_lorentz_batch(
-                self.args, valid_spectra, wavelengths, use_gpu=use_gpu
-            )
-        else:
-            raise ValueError(f"[error] Unknown fitting model: {fitting_model}")
-        
-        print(f"[info] Batch fitting completed!")
-        
-        # ========================================
-        # STEP 3: Process results and apply quality filters
-        # ========================================
-        print("[info] Step 3: Applying quality filters...")
-        
-        for idx_in_batch, original_idx in enumerate(valid_indices):
-            spectrum = valid_spectra[idx_in_batch]
-            fitted = fitted_spectra[idx_in_batch]
-            params = params_list[idx_in_batch]
-            r2 = r2_scores[idx_in_batch]
-            
-            # Extract parameters based on model
+
             if fitting_model == 'fano':
-                fwhm_nm = params.get('bright1_gamma', 0)
+                y_fit, params, r2 = su.fit_fano(self.args, spectrum, wavelengths)
+                
+                # Fano 모델: Bright mode 1을 기준으로 사용
+                fwhm_nm = params.get('bright1_gamma', 0)  # gamma = linewidth
                 peak_nm = params.get('bright1_lambda', 0)
+
             elif fitting_model == 'lorentzian':
+                y_fit, params, r2 = su.fit_lorentz(self.args, spectrum, wavelengths)
+                
                 fwhm_nm = params.get('c1', 0)
                 peak_nm = params.get('b1', 0)
+
+            else:
+                raise ValueError("[error] Wrong fitting model")
+
             
-            # Convert nm → eV
+            # nm → eV 변환
             if peak_nm > 0 and fwhm_nm > 0:
                 fwhm_ev = abs(1239.842/(peak_nm - fwhm_nm/2) - 1239.842/(peak_nm + fwhm_nm/2))
             else:
@@ -181,121 +138,197 @@ class EChemAnalyzer:
             
             # Quality Filter 1: Negative R²
             if r2 < 0:
-                print(f"  Spectrum {original_idx}: Rejected - R² negative ({r2:.3f})")
+                print(f"  Spectrum {i}: Rejected - R² negative ({r2:.3f})")
                 stats['rejected_negative_r2'] += 1
+                
                 self.rejected_fits.append({
-                    'index': original_idx,
-                    'time': self.dataset.spec_times[original_idx],
-                    'voltage': self.dataset.voltages[original_idx],
-                    'reason': f'R² negative ({r2:.3f})',
+                    'index': i,
+                    'time': self.dataset.spec_times[i],
+                    'voltage': self.dataset.voltages[i],
+                    'reason': f'Negative R² ({r2:.3f})',
                     'fwhm': fwhm_ev,
                     'r2': r2
                 })
                 continue
-            
-            # Quality Filter 2: Width limit (in eV)
-            if fwhm_ev > max_width:
-                print(f"  Spectrum {original_idx}: Rejected - Width too large ({fwhm_ev:.3f} eV > {max_width} eV)")
+
+            # Quality Filter 2: FWHM limit
+            if fwhm_ev > max_width and fwhm_ev != 0:
+                print(f"  Spectrum {i}: Rejected - FWHM too large ({fwhm_ev:.3f} eV)")
                 stats['rejected_width'] += 1
+                
                 self.rejected_fits.append({
-                    'index': original_idx,
-                    'time': self.dataset.spec_times[original_idx],
-                    'voltage': self.dataset.voltages[original_idx],
-                    'reason': f'Width too large ({fwhm_ev:.3f} eV)',
+                    'index': i,
+                    'time': self.dataset.spec_times[i],
+                    'voltage': self.dataset.voltages[i],
+                    'reason': f'FWHM too large ({fwhm_ev:.3f} eV)',
                     'fwhm': fwhm_ev,
                     'r2': r2
                 })
                 continue
-            
+
             # Quality Filter 3: R² threshold
             if r2 < min_r2:
-                print(f"  Spectrum {original_idx}: Rejected - R² too low ({r2:.3f} < {min_r2})")
+                print(f"  Spectrum {i}: Rejected - R² too low ({r2:.3f})")
                 stats['rejected_fitting'] += 1
+                
                 self.rejected_fits.append({
-                    'index': original_idx,
-                    'time': self.dataset.spec_times[original_idx],
-                    'voltage': self.dataset.voltages[original_idx],
+                    'index': i,
+                    'time': self.dataset.spec_times[i],
+                    'voltage': self.dataset.voltages[i],
                     'reason': f'R² too low ({r2:.3f})',
                     'fwhm': fwhm_ev,
                     'r2': r2
                 })
                 continue
-            
-            # Compute SNR
-            peak_intensity = spectrum.max()
-            noise_region = spectrum[:int(len(spectrum) * 0.1)]
-            noise_std = np.std(noise_region)
-            snr = peak_intensity / noise_std if noise_std > 0 else 0
-            
-            # Convert all parameters to eV
-            if fitting_model == 'lorentzian':
-                num_peaks = self.args.get('NUM_PEAKS', 1)
-                for peak_idx in range(1, num_peaks + 1):
-                    peak_nm = params.get(f'b{peak_idx}', 0)
-                    fwhm_nm = params.get(f'c{peak_idx}', 0)
-                    
-                    if peak_nm > 0:
-                        params[f'peakeV{peak_idx}'] = 1239.842 / peak_nm
-                        if fwhm_nm > 0:
-                            params[f'FWHMeV{peak_idx}'] = abs(
-                                1239.842/(peak_nm - fwhm_nm/2) - 1239.842/(peak_nm + fwhm_nm/2)
-                            )
-                        else:
-                            params[f'FWHMeV{peak_idx}'] = 0
-                    else:
-                        params[f'peakeV{peak_idx}'] = 0
-                        params[f'FWHMeV{peak_idx}'] = 0
-            
-            elif fitting_model == 'fano':
-                num_bright = self.args.get('NUM_BRIGHT_MODES', 1)
-                for mode_idx in range(1, num_bright + 1):
-                    resonance_nm = params.get(f'bright{mode_idx}_lambda', 0)
-                    gamma_nm = params.get(f'bright{mode_idx}_gamma', 0)
-                    
-                    if resonance_nm > 0:
-                        params[f'resonanceeV{mode_idx}'] = 1239.842 / resonance_nm
-                        params[f'resonancenm{mode_idx}'] = resonance_nm
-                        if gamma_nm > 0:
-                            params[f'gammaeV{mode_idx}'] = abs(
-                                1239.842/(resonance_nm - gamma_nm/2) - 1239.842/(resonance_nm + gamma_nm/2)
-                            )
-                            params[f'gammanm{mode_idx}'] = gamma_nm
-                        else:
-                            params[f'gammaeV{mode_idx}'] = 0
-                            params[f'gammanm{mode_idx}'] = 0
-                    else:
-                        params[f'resonanceeV{mode_idx}'] = 0
-                        params[f'resonancenm{mode_idx}'] = 0
-                        params[f'gammaeV{mode_idx}'] = 0
-                        params[f'gammanm{mode_idx}'] = 0
-            
-            # Store additional metadata
-            params['time'] = self.dataset.spec_times[original_idx]
-            params['voltage'] = self.dataset.voltages[original_idx]
-            params['r2'] = r2
-            params['snr'] = snr
-            params['spectrum'] = spectrum
-            params['fit'] = fitted
-            
-            # Accepted!
+
+            # ✅ Accepted: Store parameters
             stats['accepted'] += 1
-            self.fitted_params.append(params)
+
+            # Compute SNR
+            baseline = np.median(spectrum[spectrum < np.percentile(spectrum, 20)])
+            snr = (spectrum.max() - baseline) / baseline if baseline > 0 else 0
+
+            # Convert peak to eV
+            peak_ev = 1239.842 / peak_nm if peak_nm > 0 else 0
+
+            # 기본 결과 저장
+            result = {
+                'index': i,
+                'time': self.dataset.spec_times[i],
+                'voltage': self.dataset.voltages[i],
+                'spectrum': spectrum,        # ✅ 추가: 원본 스펙트럼
+                'fit': y_fit,                # ✅ 추가: 피팅된 곡선
+                'params': params,            # 원본 파라미터 (nm 단위)
+                'r2': r2,
+                'snr': snr}
+
+            # ✅✅✅ 수정: 모델별로 파라미터 저장 방식 다르게 처리
+            if fitting_model == 'fano':
+                # ========================================
+                # FANO 모델: Bright + Dark 모드 저장
+                # ========================================
+                num_bright = self.args.get('NUM_BRIGHT_MODES', 0)
+                num_dark = self.args.get('NUM_DARK_MODES', 0)
+                
+                # Bright modes 처리
+                for bright_idx in range(num_bright):
+                    idx = bright_idx + 1  # 1-indexed
+                    
+                    c = params.get(f'bright{idx}_c', 0)
+                    lam_nm = params.get(f'bright{idx}_lambda', 0)
+                    gamma_nm = params.get(f'bright{idx}_gamma', 0)
+                    
+                    # nm → eV 변환
+                    if lam_nm > 0:
+                        resonance_ev = 1239.842 / lam_nm
+                        
+                        if gamma_nm > 0:
+                            gamma_ev = abs(1239.842/(lam_nm - gamma_nm/2) - 
+                                          1239.842/(lam_nm + gamma_nm/2))
+                        else:
+                            gamma_ev = 0
+                    else:
+                        resonance_ev = 0
+                        gamma_ev = 0
+                    
+                    # eV 단위로 저장
+                    result[f'resonanceeV{idx}'] = resonance_ev  # Resonance energy
+                    result[f'gammaeV{idx}'] = gamma_ev          # Linewidth (gamma)
+                    result[f'c{idx}'] = c                       # Coupling strength
+                    
+                    # nm 단위로도 저장 (디버그용)
+                    result[f'resonancenm{idx}'] = lam_nm
+                    result[f'gammanm{idx}'] = gamma_nm
+                
+                # Dark modes 처리
+                for dark_idx in range(num_dark):
+                    idx = dark_idx + 1  # 1-indexed
+                    
+                    d = params.get(f'dark{idx}_d', 0)
+                    lam_nm = params.get(f'dark{idx}_lambda', 0)
+                    Gamma_nm = params.get(f'dark{idx}_Gamma', 0)
+                    theta = params.get(f'dark{idx}_theta', 0)
+                    
+                    # nm → eV 변환
+                    if lam_nm > 0:
+                        resonance_ev = 1239.842 / lam_nm
+                        
+                        if Gamma_nm > 0:
+                            Gamma_ev = abs(1239.842/(lam_nm - Gamma_nm/2) - 
+                                          1239.842/(lam_nm + Gamma_nm/2))
+                        else:
+                            Gamma_ev = 0
+                    else:
+                        resonance_ev = 0
+                        Gamma_ev = 0
+                    
+                    # eV 단위로 저장
+                    result[f'dark_resonanceeV{idx}'] = resonance_ev  # Dark mode resonance
+                    result[f'dark_GammaeV{idx}'] = Gamma_ev          # Dark linewidth
+                    result[f'dark_d{idx}'] = d                        # Dark amplitude
+                    result[f'dark_theta{idx}'] = theta                # Phase
+                    
+                    # nm 단위로도 저장
+                    result[f'dark_resonancenm{idx}'] = lam_nm
+                    result[f'dark_Gammanm{idx}'] = Gamma_nm
+
+            elif fitting_model == 'lorentzian':
+                # ========================================
+                # LORENTZIAN 모델: 기존 방식 유지
+                # ========================================
+                result['peakeV1'] = peak_ev
+                result['FWHMeV1'] = fwhm_ev
+                result['area1'] = params.get('a1', 0)
+                result['peaknm1'] = peak_nm
+                result['FWHMnm1'] = fwhm_nm
+                
+                # 다중 피크 처리 (NUM_PEAKS > 1인 경우)
+                num_peaks = self.args.get('NUM_PEAKS', 1)
+                if num_peaks > 1:
+                    for peak_idx in range(2, num_peaks + 1):
+                        peak_nm_i = params.get(f'b{peak_idx}', 0)
+                        fwhm_nm_i = params.get(f'c{peak_idx}', 0)
+                        
+                        # nm → eV 변환
+                        if peak_nm_i > 0:
+                            peak_ev_i = 1239.842 / peak_nm_i
+                            if fwhm_nm_i > 0:
+                                fwhm_ev_i = abs(1239.842/(peak_nm_i - fwhm_nm_i/2) - 
+                                               1239.842/(peak_nm_i + fwhm_nm_i/2))
+                            else:
+                                fwhm_ev_i = 0
+                        else:
+                            peak_ev_i = 0
+                            fwhm_ev_i = 0
+                        
+                        result[f'peakeV{peak_idx}'] = peak_ev_i
+                        result[f'FWHMeV{peak_idx}'] = fwhm_ev_i
+                        result[f'area{peak_idx}'] = params.get(f'a{peak_idx}', 0)
+                        result[f'peaknm{peak_idx}'] = peak_nm_i
+                        result[f'FWHMnm{peak_idx}'] = fwhm_nm_i
+
+            # 결과 저장
+            self.fitted_params.append(result)
             
-            if (original_idx + 1) % 100 == 0:
-                print(f"  Processed {original_idx + 1}/{n_spectra} spectra...")
+            if i % 10 == 0:
+                if fitting_model == 'fano':
+                    print(f"  Fitted spectrum {i}/{n_spectra}: "
+                          f"Bright1={peak_ev:.3f} eV ({peak_nm:.1f} nm), "
+                          f"γ={fwhm_ev:.3f} eV ({fwhm_nm:.1f} nm), "
+                          f"R²={r2:.3f}, SNR={snr:.1f}")
+                else:
+                    print(f"  Fitted spectrum {i}/{n_spectra}: "
+                          f"Peak={peak_ev:.3f} eV ({peak_nm:.1f} nm), "
+                          f"FWHM={fwhm_ev:.3f} eV ({fwhm_nm:.1f} nm), "
+                          f"R²={r2:.3f}, SNR={snr:.1f}")
         
-        # ========================================
-        # Print statistics
-        # ========================================
-        print("\n" + "="*60)
-        print("FITTING STATISTICS")
-        print("="*60)
-        print(f"Total spectra: {stats['total']}")
-        print(f"Accepted fits: {stats['accepted']}")
-        print(f"Rejected (negative R²): {stats['rejected_negative_r2']}")
-        print(f"Rejected (width): {stats['rejected_width']}")
-        print(f"Rejected (R² threshold): {stats['rejected_fitting']}")
-        print("="*60)
+        # Print filtering statistics
+        print(f"\n[Filtering Statistics]")
+        print(f"  Total spectra: {stats['total']}")
+        print(f"  Rejected (negative R²): {stats['rejected_negative_r2']}")
+        print(f"  Rejected (FWHM > {max_width:.3f} eV): {stats['rejected_width']}")
+        print(f"  Rejected (R² < {min_r2:.3f}): {stats['rejected_fitting']}")
+        print(f"  Accepted: {stats['accepted']}")
     
     def convert_fwhm_ev_to_nm(self, peak_ev: float, fwhm_ev: float) -> float:
         """Convert FWHM from eV to nm using MATLAB formula"""

@@ -97,27 +97,32 @@ args['FITTING_MODEL'] = 'lorentzian'  # 'lorentzian' or 'fano'
 # ============================================================================
 # FITTING PARAMETERS - (used when FITTING_MODEL = 'lorentzian')
 # ============================================================================
-# Multi-Attempt Fitting 
-args['FIT_MAX_ITERATIONS'] = 100  # Number of iterative refinement cycles                                      
 
 args['NUM_PEAKS'] = 1  # Number of Lorentzian peaks to fit per spectrum
                        # 1: Single peak (monomers, simple nanoparticles)
                        # 2: Two peaks (dimers, coupled nanoparticles)
                        # 3+: Multiple peaks (complex coupled systems)
 
-args['PEAK_POSITION_INITIAL_GUESS'] = 'auto'  # Initial guess for peak positions
-                                      # 'auto': Automatic peak detection using scipy.signal.find_peaks
-                                      # [650, 800]: Manual specification (wavelength in nm)
-                                      # Must provide NUM_PEAKS values if manual
-                                      # Example for 2 peaks: [650, 800]
+# ⚠️ CRITICAL: Initial guesses (MUST PROVIDE FOR EACH PEAK)
+args['PEAK_POSITION_INITIAL_GUESS'] = [650.0]  # List of positions in nm (REQUIRED!)
+                                      # Example for 2 peaks: [600, 700]
                                       # Example for 3 peaks: [600, 700, 850]
+                                      # MUST be a list matching NUM_PEAKS
 
-args['PEAK_WIDTH_INITIAL_GUESS'] = None  # None (auto) or list of widths in nm
+args['PEAK_WIDTH_INITIAL_GUESS'] = [30.0]  # List of FWHMs in nm (REQUIRED!)
                                           # Example: [30, 40] for two peaks with different widths
-                                          # If None, width is auto-estimated from data
-                                          # MUST be a list matching NUM_PEAKS if provided
+                                          # MUST be a list matching NUM_PEAKS
 
-args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions during fitting
+args['PEAK_HEIGHT_INITIAL_GUESS'] = [0.5]  # List of amplitudes (REQUIRED!)
+                                          # Normalized (typically 0.1 - 1.0)
+                                          # MUST be a list matching NUM_PEAKS
+
+# Constraints
+args['PEAK_WIDTH_MAX'] = [60.0]  # Max FWHM per peak (or single value for all)
+                              # List: [50, 60] for different max per peak
+                              # Single value: 60 applies to all peaks
+                              
+args['PEAK_POSITION_TOLERANCE'] = [50.0]  # Allowed deviation from initial guess (nm)
                                                  # None: No constraint (peaks can move freely within FIT_RANGE_NM)
                                                  # Single value (e.g., 50): All peaks constrained to ±50 nm from initial guess
                                                  # List (e.g., [20, 30, 40]): Different constraint per peak (must match NUM_PEAKS)
@@ -132,74 +137,40 @@ args['PEAK_POSITION_TOLERANCE'] = [20, 20, 30]  # Constrain peak positions durin
                                                  # - Known approximate peak locations from theory/previous experiments
                                                  # - Avoid peak swapping in multi-peak fits
 
-args['PEAK_WIDTH_MAX'] = 59  # Maximum allowed width (FWHM) in nm
-                              # None for no limit, or a number (e.g., 59)
-                              # This replaces the old filtering-only approach
-                              # Now width is constrained DURING fitting                                                 
+args['PEAK_MIN_DISTANCE'] = 30.0  # Minimum distance between peaks (nm) (multi-peak only)
+                                   # Prevents peaks from collapsing onto each other
 
 # ============================================================================
-# FITTING PARAMETERS - (used when FITTING_MODEL = 'fano')
+# PYTORCH OPTIMIZER SETTINGS
 # ============================================================================
-args['FIT_BRIGHT_ITERATIONS'] = 50   # Step 1: Bright only iteration
-args['FIT_DARK_ITERATIONS'] = 10    # Step 2: Dark only iteration
 
-# Bright modes (phase = 0 fixed)
-args['NUM_BRIGHT_MODES'] = 2  # Number of bright modes (non-interacting background)
-args['BRIGHT_POSITION_INITIAL_GUESS'] = [690, 565]  # Wavelengths in nm (REQUIRED, must be a list)
-                                            # Example: [690, 565] for two bright peaks
+# GPU settings
+args['USE_GPU'] = False  # Set to True if CUDA available
 
-args['BRIGHT_WIDTH_INITIAL_GUESS'] = None  # None (auto=30 nm) or list of widths
-                                            # Example: [25, 35] for two bright modes
-                                            # MUST be a list matching NUM_BRIGHT_MODES if provided
+# Optimizer
+args['OPTIMIZER'] = 'RAdam'  # 'RAdam', 'Adam', 'NAdam'
+args['LEARNING_RATE'] = 0.01
+args['NUM_ITERATIONS'] = 1000
+args['USE_LR_SCHEDULER'] = False  # Optional: adaptive learning rate
 
-args['BRIGHT_POSITION_TOLERANCE'] = [10, 10]  # ±nm constraint for each bright peak
-                                               # Can be a single value or list matching NUM_BRIGHT_MODES
-                                               # Example: 10 → all peaks ±10 nm
-                                               # Example: [10, 20] → first ±10, second ±20
+# Progress reporting
+args['PRINT_EVERY'] = 100  # Print loss every N iterations
 
-args['BRIGHT_WIDTH_MAX'] = None  # Maximum width (gamma) for bright modes in nm
-                                  # None: uses FANO_GAMMA_RANGE upper bound (100)
-                                  # Number: constrains all bright modes (e.g., 80)
-                                  # This prevents bright mode width from becoming too large
+# ============================================================================
+# REGULARIZATION WEIGHTS
+# ============================================================================
 
-# Dark modes (phase fitted)
-args['NUM_DARK_MODES'] = 1  # Number of dark modes (interacting resonances)
-args['DARK_POSITION_INITIAL_GUESS'] = [620]  # Wavelengths in nm (REQUIRED, must be a list)
-                                     # Example: [620] for one dark mode at 620 nm
+# Penalty for negative heights (should be positive)
+args['REG_NEGATIVE_HEIGHT'] = 1.0
 
-args['DARK_WIDTH_INITIAL_GUESS'] = None  # None (auto=30 nm) or list of widths
-                                          # Example: [40] for one dark mode
-                                          # MUST be a list matching NUM_DARK_MODES if provided
+# Penalty for exceeding width constraints
+args['REG_WIDTH_MAX'] = 0.1
 
-args['DARK_POSITION_TOLERANCE'] = [10]  # ±nm constraint for each dark peak
-                                         # Can be a single value or list matching NUM_DARK_MODES
+# Penalty for deviating from initial position guess
+args['REG_POSITION_CONSTRAINT'] = 1.0
 
-args['DARK_WIDTH_MAX'] = None  # Maximum width (Gamma) for dark modes in nm
-                                # None: uses FANO_GAMMA_RANGE upper bound (100)
-                                # Number: constrains all dark modes (e.g., 60)
-                                # This prevents dark mode width from becoming too large
-
-# Fano-specific fitting parameters
-args['FANO_PHI_INIT'] = np.pi  # Initial phase for dark modes (radians)
-                               # Default: π (180 degrees)
-                               # Typical range: 0 to 2π
-
-args['FANO_Q_RANGE'] = (-20, 20)  # Amplitude range for both bright (c_i) and dark (d_j) modes
-                                   # Negative values allow for destructive interference
-                                   # Example: (-20, 20) allows strong interference effects
-
-args['FANO_PHI_RANGE'] = (0, 2*np.pi)  # Phase range for dark modes (radians)
-                                        # Full range: (0, 2π) allows all possible phases
-
-args['FANO_GAMMA_RANGE'] = (5, 100)  # Linewidth range in nm for both γ (bright) and Γ (dark)
-                                      # (5, 100): typical range for plasmonic resonances
-                                      # Adjust based on expected resonance widths
-
-# Debug mode
-args['FANO_DEBUG'] = True  # If True, prints detailed fitting information
-                           # Shows Step 1 and Step 2 results with parameters
-                           # Useful for troubleshooting and understanding fitting process
-
+# Penalty for peaks being too close (multi-peak only)
+args['REG_PEAK_DISTANCE'] = 0.01
 
 # ============================================================================
 # OUTPUT AND VISUALIZATION SETTINGS
@@ -251,3 +222,29 @@ args['MANUAL_COORDS'] = [
 args['DEBUG'] = True  # Enable debug mode for additional output and intermediate file saving
                        # When True, creates debug images and verbose console output
                        # Set to False for production runs to reduce output volume
+
+
+# ============================================================================
+# ⚠️ DEPRECATED PARAMETERS (No longer used with PyTorch fitting)
+# ============================================================================
+# These parameters are from scipy-based fitting and are IGNORED:
+# - FIT_MAX_ITERATIONS
+# - PEAK_POSITION_INITIAL_GUESS = 'auto'  (must now be explicit list)
+#
+# PyTorch requires explicit initial guesses for all parameters!
+
+
+# ============================================================================
+# EXAMPLE: Multi-peak Lorentzian (2 peaks)
+# ============================================================================
+"""
+# For 2-peak fitting:
+args['NUM_PEAKS'] = 2
+args['PEAK_POSITION_INITIAL_GUESS'] = [600.0, 700.0]
+args['PEAK_WIDTH_INITIAL_GUESS'] = [25.0, 30.0]
+args['PEAK_HEIGHT_INITIAL_GUESS'] = [0.4, 0.6]
+args['PEAK_WIDTH_MAX'] = [50.0, 60.0]  # Different max for each peak
+args['PEAK_POSITION_TOLERANCE'] = [30.0, 40.0]  # Different tolerance
+args['PEAK_MIN_DISTANCE'] = 50.0  # Peaks must be at least 50 nm apart
+args['NUM_ITERATIONS'] = 2000  # More iterations for multi-peak
+"""

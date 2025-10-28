@@ -71,12 +71,17 @@ class SpectrumAnalyzer:
     
     def fit_all_particles(self):
         """
-        Fit models to all detected particle clusters using BATCH PROCESSING
+        Fit Lorentzian functions to all detected particle clusters
         
-        Key changes:
-        - Collect all spectra first, then fit in one batch
-        - Use PyTorch-based batch fitting
-        - Apply quality filters after batch fitting
+        This method:
+        - Integrates 3x3 pixel regions around each cluster center
+        - Fits Lorentzian functions to the integrated spectra
+        - Applies quality filters based on FWHM and R-squared values
+        - Computes MATLAB-style Signal-to-Noise ratios
+        - Stores both accepted and rejected results for analysis
+        
+        The fitting uses the background-corrected spectral data and follows
+        MATLAB-compatible methods for consistency with existing analysis.
         """
         print("\n[Step] Fitting all particles in clusters...")
         
@@ -84,133 +89,84 @@ class SpectrumAnalyzer:
             print("[warning] No clusters found for analysis")
             return
         
-        # Integration parameters
+        # Integration parameters (MATLAB-compatible 3x3 integration)
         int_size = 3
-        int_var = (int_size - 1) // 2
-        
+        int_var = (int_size - 1) // 2  # Half-width of integration region
+
         # Quality filter parameters
-        max_width = self.args.get("MAX_WIDTH_NM", 59)
-        min_r2 = self.args.get("RSQ_MIN", 0.9)
-        
-        # Fitting model
+        max_width = self.args.get("MAX_WIDTH_NM", 59)  # Maximum allowed FWHM
+        min_r2 = self.args.get("RSQ_MIN", 0.9)         # Minimum R-squared
+
+        # Fit spectrum based on selected model
         fitting_model = self.args.get('FITTING_MODEL')
         print(f"[info] Using fitting model: {fitting_model}")
-        
+
         # Statistics tracking
-        stats = {
-            'total_clusters': len(self.dataset.clusters),
-            'rejected_width': 0,
-            'rejected_fitting': 0,
-            'accepted': 0
-        }
+        stats = {'total_clusters': len(self.dataset.clusters),
+                'rejected_width': 0,
+                'rejected_fitting': 0,
+                'accepted': 0}
         
-        # ========================================
-        # STEP 1: Collect all spectra
-        # ========================================
-        print("[info] Step 1: Collecting spectra from all clusters...")
-        
-        all_spectra = []
-        cluster_info = []  # Store metadata for each spectrum
-        
+        # Process each detected cluster
         for cluster in self.dataset.clusters:
+            cluster_results = []
+            
+            print(f"\n[Fitting Cluster {cluster['label']}] - {cluster['size']} pixels")
+            
+            # Use cluster center for integration
             center_row = int(cluster['center'][0])
             center_col = int(cluster['center'][1])
             
-            # Integrate spectrum over 3x3 region
+            # Integrate spectrum over 3x3 pixel region (MATLAB-style)
             H, W, L = self.dataset.cube.shape
             integrated_spectrum = np.zeros(L)
             pixel_count = 0
             
+            # Sum spectra from 3x3 region around center
             for m in range(-int_var, int_var + 1):
                 for l in range(-int_var, int_var + 1):
                     row = center_row + m
                     col = center_col + l
                     
+                    # Check boundaries
                     if 0 <= row < H and 0 <= col < W:
                         integrated_spectrum += self.dataset.cube[row, col, :]
                         pixel_count += 1
             
-            # Skip invalid spectra
+            # Skip if no valid pixels or very low signal
             if pixel_count == 0 or integrated_spectrum.max() < 0.01:
                 continue
             
-            # Store spectrum and metadata
-            all_spectra.append(integrated_spectrum)
-            cluster_info.append({
-                'cluster': cluster,
-                'center_row': center_row,
-                'center_col': center_col,
-                'pixel_count': pixel_count
-            })
-        
-        if len(all_spectra) == 0:
-            print("[warning] No valid spectra collected")
-            return
-        
-        # Convert to numpy array for batch processing
-        all_spectra = np.array(all_spectra)  # shape: (N_clusters, N_wavelengths)
-        print(f"[info] Collected {len(all_spectra)} spectra for batch fitting")
-        
-        # ========================================
-        # STEP 2: Batch fitting
-        # ========================================
-        print("[info] Step 2: Batch fitting all spectra...")
-        
-        use_gpu = self.args.get('USE_GPU', False)
-        
-        if fitting_model == 'fano':
-            fitted_spectra, params_list, r2_scores = su.fit_fano_batch(
-                self.args, all_spectra, self.dataset.wvl, use_gpu=use_gpu
-            )
-        elif fitting_model == 'lorentzian':
-            fitted_spectra, params_list, r2_scores = su.fit_lorentz_batch(
-                self.args, all_spectra, self.dataset.wvl, use_gpu=use_gpu
-            )
-        else:
-            raise ValueError(f"[error] Unknown fitting model: {fitting_model}")
-        
-        print(f"[info] Batch fitting completed!")
-        
-        # ========================================
-        # STEP 3: Process results and apply quality filters
-        # ========================================
-        print("[info] Step 3: Applying quality filters...")
-        
-        for i, (spectrum, fitted, params, r2, info) in enumerate(
-            zip(all_spectra, fitted_spectra, params_list, r2_scores, cluster_info)
-        ):
-            cluster = info['cluster']
-            center_row = info['center_row']
-            center_col = info['center_col']
-            pixel_count = info['pixel_count']
-            
-            print(f"\n[Fitting Cluster {cluster['label']}]")
-            
-            # Extract width parameter based on model
             if fitting_model == 'fano':
-                fitted_width = params.get('bright1_gamma', 0)
-                peak_nm = params.get('bright1_lambda', 0)
+
+                y_fit, params, r2 = su.fit_fano(self.args, integrated_spectrum, self.dataset.wvl)
+                fitted_width = params.get('bright1_gamma')
+
             elif fitting_model == 'lorentzian':
-                fitted_width = params.get('c1', 0)
-                peak_nm = params.get('b1', 0)
-            
-            # Quality Filter 1: Width limit
+
+                y_fit, params, r2 = su.fit_lorentz(self.args, integrated_spectrum, self.dataset.wvl)
+                fitted_width = params.get('c1', 0) # FWHM parameter
+
+            else: raise ValueError("[error] Wrong fitting model")
+
+            # Quality Filter 1: FWHM limit
             if fitted_width > max_width:
                 print(f"  [Rejected - Width] FWHM too large: {fitted_width:.1f} nm (max: {max_width:.1f} nm)")
                 stats['rejected_width'] += 1
-                
+
+                # Store rejected spectrum with reason
                 self.rejected_spectra.append({
                     'cluster_label': cluster['label'],
                     'row': center_row,
                     'col': center_col,
-                    'spectrum': spectrum,
+                    'spectrum': integrated_spectrum,
                     'wavelengths': self.dataset.wvl,
                     'reason': f"Width too large: {fitted_width:.1f} nm",
                     'fitted_width': fitted_width
                 })
                 continue
-            
-            # Quality Filter 2: R² limit
+
+            # Quality Filter 2: R-squared limit
             if r2 < min_r2:
                 print(f"  [Rejected - Fitting] R² too low: {r2:.3f} (min: {min_r2})")
                 stats['rejected_fitting'] += 1
@@ -219,78 +175,71 @@ class SpectrumAnalyzer:
                     'cluster_label': cluster['label'],
                     'row': center_row,
                     'col': center_col,
-                    'spectrum': spectrum,
+                    'spectrum': integrated_spectrum,
                     'wavelengths': self.dataset.wvl,
                     'reason': f"R² too low: {r2:.3f}",
                     'fitted_width': fitted_width
                 })
                 continue
+
+            # Compute MATLAB-style Signal-to-Noise Ratio
+            # 1. Noise: standard deviation of fitting residuals over full range
+            resid = np.abs(integrated_spectrum - y_fit)  # Absolute residuals
+            noise = np.std(resid)
             
-            # Compute SNR (MATLAB-style)
-            peak_intensity = spectrum.max()
-            noise_start = int(len(spectrum) * 0.1)
-            noise_end = int(len(spectrum) * 0.2)
-            noise_std = np.std(spectrum[noise_start:noise_end])
-            snr = peak_intensity / noise_std if noise_std > 0 else 0
+            # 2. Signal: raw data value at resonance wavelength
+            resonance_wl = params.get('b1', self.dataset.wvl[np.argmax(integrated_spectrum)])
+            resonance_idx = np.argmin(np.abs(self.dataset.wvl - resonance_wl))
+            signal = integrated_spectrum[resonance_idx]
             
-            # Convert to eV if needed
-            if peak_nm > 0:
-                peak_ev = 1239.842 / peak_nm
-                if fitted_width > 0:
-                    fwhm_ev = abs(1239.842/(peak_nm - fitted_width/2) - 1239.842/(peak_nm + fitted_width/2))
-                else:
-                    fwhm_ev = 0
-            else:
-                peak_ev = 0
-                fwhm_ev = 0
-            
-            # Accept this fit
+            # 3. SNR calculation
+            snr = signal / noise if noise > 0 else 0
+
             stats['accepted'] += 1
-            print(f"  [Accepted] Peak: {peak_nm:.1f} nm ({peak_ev:.3f} eV), FWHM: {fitted_width:.1f} nm, R²: {r2:.3f}, SNR: {snr:.1f}")
             
-            # Store result
-            fit_result = {
+            # Store successful fitting results
+            result = {
                 'row': center_row,
                 'col': center_col,
-                'spectrum': spectrum,
-                'fit': fitted,
+                'spectrum': integrated_spectrum,
+                'fit': y_fit,
                 'params': params,
                 'r2': r2,
                 'snr': snr,
-                'peak_wl': peak_nm,
-                'fwhm': fitted_width,
-                'peak_intensity': peak_intensity,
-                'integrated_pixels': pixel_count,
-                'peakeV': peak_ev,
-                'FWHMeV': fwhm_ev
+                'peak_wl': params.get('b1', self.dataset.wvl[resonance_idx]),
+                'fwhm': params.get('c1', 0),
+                'peak_intensity': integrated_spectrum[resonance_idx],
+                'raw_peak_intensity': signal,
+                'integrated_pixels': pixel_count
             }
-            
-            # Find or create cluster_fit entry
-            cluster_fit = next(
-                (cf for cf in self.cluster_fits if cf['cluster_label'] == cluster['label']),
-                None
-            )
-            
-            if cluster_fit is None:
-                cluster_fit = {
-                    'cluster_label': cluster['label'],
-                    'cluster_size': cluster['size'],
-                    'fits': []
-                }
-                self.cluster_fits.append(cluster_fit)
-            
-            cluster_fit['fits'].append(fit_result)
-        
-        # Print statistics
-        print("\n" + "="*60)
-        print("FITTING STATISTICS")
-        print("="*60)
-        print(f"Total clusters: {stats['total_clusters']}")
-        print(f"Accepted fits: {stats['accepted']}")
-        print(f"Rejected (width): {stats['rejected_width']}")
-        print(f"Rejected (R²): {stats['rejected_fitting']}")
-        print("="*60)
 
+            num_peaks = self.args.get('NUM_PEAKS')
+            if num_peaks > 1:
+
+                for i in range(2,num_peaks+1):
+                    result[f'peak_wl{i}'] = params.get(f'b{i}')
+                    result[f'fwhm{i}'] = params.get(f'c{i}')
+
+            cluster_results.append(result)
+            
+            # Store cluster fitting results
+            self.cluster_fits.append({
+                'cluster_label': cluster['label'],
+                'cluster_size': cluster['size'],
+                'fits': cluster_results
+            })
+            
+            # Print fitting summary for this cluster
+            print(f"  Integrated {pixel_count} pixels, peak at {result['peak_wl']:.1f} nm")
+            print(f"  FWHM: {fitted_width:.1f} nm (max allowed: {max_width:.1f} nm)")
+            print(f"  SNR (MATLAB style): {snr:.1f} (raw signal: {signal:.1f}, noise: {noise:.3f})")
+
+        # Print overall filtering statistics
+        print(f"\n[Filtering Statistics]")
+        print(f"  Total clusters: {stats['total_clusters']}")
+        print(f"  Rejected (width > {max_width:.0f} nm): {stats['rejected_width']}")
+        print(f"  Rejected (poor fit): {stats['rejected_fitting']}")
+        print(f"  Accepted: {stats['accepted']}")
     
     def select_representatives(self):
         """
