@@ -130,10 +130,12 @@ class SpectrumAnalyzer:
                         integrated_spectrum += self.dataset.cube[row, col, :]
                         pixel_count += 1
             
+            integrated_spectrum = integrated_spectrum / pixel_count
+
             # Skip invalid spectra
             if pixel_count == 0 or integrated_spectrum.max() < 0.01:
                 continue
-            
+
             # Store spectrum and metadata
             all_spectra.append(integrated_spectrum)
             cluster_info.append({

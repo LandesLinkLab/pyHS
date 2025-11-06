@@ -168,11 +168,15 @@ def flatfield_correct(cube: np.ndarray,
         Path to white reference TDMS file
     dark_path : str
         Path to dark reference TDMS file
-    
+
     Returns:
     --------
     Tuple[np.ndarray, np.ndarray, np.ndarray]
-        (corrected_cube, white_ref, dark_ref) - references saved for background correction
+        (corrected_cube, flatfield_ref, dark_ref)
+        
+        corrected_cube: Flatfield-corrected hyperspectral cube, shape (H, W, L)
+        flatfield_ref: (white - dark) already calculated, shape (H, 1, L)
+        dark_ref: Dark reference average (for reference only), shape (H, 1, L)
     """
     # Load white and dark references
     w_cube, w_wvl = tdms_to_cube(white_path)
@@ -528,7 +532,7 @@ def detect_particles_matlab_style(rgb_image, args):
     
     return labels, clusters
 
-def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref, raw_cube):
+def apply_background_correction(cube, wvl, clusters, args, flatfield_ref, raw_cube):
     """
     Apply background correction to hyperspectral cube
     
@@ -545,7 +549,7 @@ def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref, 
         List of detected particle clusters
     args : dict
         Configuration parameters
-    white_ref, dark_ref : np.ndarray
+    flatfield_ref : np.ndarray
         White and dark references from flatfield correction
     raw_cube : np.ndarray
         Original raw cube before flatfield correction
@@ -559,14 +563,17 @@ def apply_background_correction(cube, wvl, clusters, args, white_ref, dark_ref, 
     
     if bg_mode == 'global':
         # MATLAB-style global background
-        corrected = apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube)
-    else:
+        corrected = apply_global_background(cube, wvl, args, flatfield_ref, raw_cube)
+    elif bg_mode == 'local':
         # Local background
-        corrected = apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_cube)
+        corrected = apply_local_background(cube, wvl, clusters, args, flatfield_ref, raw_cube)
+
+    else:
+        raise ValueError("[error] Wrong bg_mode")
     
     return corrected
 
-def apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube):
+def apply_global_background(cube, wvl, args, flatfield_ref, raw_cube):
     """
     Apply global background subtraction identical to MATLAB anfunc_lorentz_fit.m
     
@@ -583,7 +590,7 @@ def apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube):
         Wavelength array
     args : dict
         Configuration with BACKGROUND_PERCENTILE
-    white_ref, dark_ref : np.ndarray
+    flatfield_ref : np.ndarray
         Flatfield references
     raw_cube : np.ndarray
         Original raw cube
@@ -646,10 +653,10 @@ def apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube):
     
     for row in range(H):
         # Select row-specific flatfield
-        if row < white_ref.shape[0]:
-            flatfield = (white_ref[row, 0, :] - dark_ref[row, 0, :])
+        if row < flatfield_ref.shape[0]:
+            flatfield = (flatfield_ref[row, 0, :])
         else:
-            flatfield = (white_ref[-1, 0, :] - dark_ref[-1, 0, :])
+            flatfield = (flatfield_ref[-1, 0, :])
         
         denominator = np.where(flatfield > 0, flatfield, 1.0)
         
@@ -667,7 +674,7 @@ def apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube):
     
     return corrected
 
-def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_cube):
+def apply_local_background(cube, wvl, clusters, args, flatfield_ref, raw_cube):
     """
     Apply local background correction around each cluster
     
@@ -684,7 +691,7 @@ def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_c
         List of detected particle clusters
     args : dict
         Configuration with local background parameters
-    white_ref, dark_ref : np.ndarray
+    flatfield_ref : np.ndarray
         Flatfield references
     raw_cube : np.ndarray
         Original raw cube
@@ -700,7 +707,7 @@ def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_c
     corrected = np.zeros_like(cube)
     
     # Initialize with global background for non-cluster pixels
-    corrected = apply_global_background(cube, wvl, args, white_ref, dark_ref, raw_cube)
+    corrected = apply_global_background(cube, wvl, args, flatfield_ref, raw_cube)
     
     # Integration size (3x3 region)
     int_size = 3
@@ -769,10 +776,10 @@ def apply_local_background(cube, wvl, clusters, args, white_ref, dark_ref, raw_c
                             signal_raw = raw_cube[r, c, :] - background_raw
                             
                             # Apply row-specific flatfield
-                            if r < white_ref.shape[0]:
-                                flatfield = (white_ref[r, 0, :] - dark_ref[r, 0, :])
+                            if r < flatfield_ref.shape[0]:
+                                flatfield = (flatfield_ref[r, 0, :])
                             else:
-                                flatfield = (white_ref[-1, 0, :] - dark_ref[-1, 0, :])
+                                flatfield = (flatfield_ref[-1, 0, :])
                             
                             denominator = np.where(flatfield > 0, flatfield, 1.0)
                             corrected[r, c, :] = np.maximum(signal_raw / denominator, 0)

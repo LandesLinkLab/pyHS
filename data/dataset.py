@@ -197,7 +197,7 @@ class Dataset(object):
         # Apply background correction
         self.cube = du.apply_background_correction(
             self.cube, self.wvl, self.clusters, self.args,
-            self.white_ref, self.dark_ref, self.raw_cube
+            self.white_ref, self.raw_cube
         )
         
         # Update max intensity map with background-corrected data
