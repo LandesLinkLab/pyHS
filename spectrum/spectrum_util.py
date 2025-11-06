@@ -84,7 +84,70 @@ class LorentzianFitter:
         result = lorentz.sum(dim=1)  # (N_batch, N_wl)
         
         return result
-    
+
+    def compute_regularization(self, 
+                              positions: torch.Tensor,
+                              widths: torch.Tensor,
+                              heights: torch.Tensor,
+                              pos_init: torch.Tensor,
+                              dark_d=None, dark_pos=None, dark_Gamma=None, 
+                              dark_pos_init=None, dark_theta=None, 
+                              dark_theta_init=None) -> torch.Tensor:
+        """
+        Compute regularization for Lorentzian fitting
+        
+        Note: Lorentzian fitting only has bright modes, so dark mode parameters
+        are ignored (but accepted for compatibility with fit() method signature)
+        
+        Supports:
+        - Negative height penalty
+        - Width maximum constraints (supports both single value and list)
+        - Position tolerance constraints (supports both single value and list)
+        """
+        reg_loss = torch.tensor(0.0, device=self.device)
+        
+        # 1. Negative height penalty
+        reg_height = self.args.get('REG_NEGATIVE_HEIGHT', 1.0)
+        if reg_height > 0:
+            reg_loss = reg_loss + reg_height * torch.relu(-heights).pow(2).sum()
+        
+        # 2. Width maximum constraint (soft penalty)
+        reg_width = self.args.get('REG_WIDTH_MAX', 0.0)
+        if reg_width > 0:
+            width_max_config = self.args.get('PEAK_WIDTH_MAX', 100.0)
+            
+            # ✅ Handle both single value and list
+            if isinstance(width_max_config, (list, tuple)):
+                if len(width_max_config) != self.num_peaks:
+                    raise ValueError(f"PEAK_WIDTH_MAX length ({len(width_max_config)}) must match NUM_PEAKS ({self.num_peaks})")
+                width_max_tensor = torch.tensor(width_max_config, dtype=torch.float32, device=self.device)
+                width_max_tensor = width_max_tensor.unsqueeze(0).expand_as(widths)
+            else:
+                width_max_tensor = torch.tensor(width_max_config, dtype=torch.float32, device=self.device)
+            
+            excess = torch.relu(widths - width_max_tensor)
+            reg_loss = reg_loss + reg_width * excess.pow(2).sum()
+        
+        # 3. Position tolerance constraint (soft penalty)
+        reg_position = self.args.get('REG_POSITION_TOLERANCE', 0.0)
+        if reg_position > 0:
+            tolerance_config = self.args.get('PEAK_POSITION_TOLERANCE', 50.0)
+            
+            # ✅ Handle both single value and list
+            if isinstance(tolerance_config, (list, tuple)):
+                if len(tolerance_config) != self.num_peaks:
+                    raise ValueError(f"PEAK_POSITION_TOLERANCE length ({len(tolerance_config)}) must match NUM_PEAKS ({self.num_peaks})")
+                tolerance_tensor = torch.tensor(tolerance_config, dtype=torch.float32, device=self.device)
+                tolerance_tensor = tolerance_tensor.unsqueeze(0).expand_as(positions)
+            else:
+                tolerance_tensor = torch.tensor(tolerance_config, dtype=torch.float32, device=self.device)
+            
+            deviation = torch.abs(positions - pos_init)
+            excess = torch.relu(deviation - tolerance_tensor)
+            reg_loss = reg_loss + reg_position * excess.pow(2).sum()
+        
+        return reg_loss
+
     def initialize_parameters(self, 
                              spectra: np.ndarray,
                              wavelengths: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -204,7 +267,7 @@ class LorentzianFitter:
             mse_loss = (fitted - spectra_tensor).pow(2).mean()
             
             # Regularization
-            reg_loss = self.compute_regularization(positions, widths, heights, pos_init, dark_d, dark_pos, dark_Gamma, dark_pos_init, dark_theta, dark_theta_init)
+            reg_loss = self.compute_regularization(positions, widths, heights, pos_init, None, None, None, None, None, None)
             
             # Total loss
             total_loss = mse_loss + reg_loss
@@ -956,3 +1019,99 @@ def plot_spectrum(wavelengths: np.ndarray,
     plt.tight_layout()
     fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
     plt.close(fig)  # 🔧 메모리 누수 방지!
+
+def save_dfs_particle_map(max_map: np.ndarray, 
+                          representatives: List[Dict[str, Any]], 
+                          output_path: Path, 
+                          sample_name: str,
+                          args: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Save annotated particle map showing all analyzed particles with markers
+    
+    This function creates a publication-ready figure showing:
+    - Maximum intensity map as background
+    - Numbered markers for each representative particle
+    - Peak wavelength/energy labels for each particle
+    - Proper scaling and colormap
+    
+    Parameters:
+    -----------
+    max_map : np.ndarray
+        2D maximum intensity map to use as background
+    representatives : List[Dict[str, Any]]
+        List of representative particles with 'row', 'col', 'peak_wl' keys
+    output_path : Path
+        Output file path for saving the figure
+    sample_name : str
+        Sample name for the title
+    args : Optional[Dict[str, Any]]
+        Configuration dictionary with OUTPUT_UNIT setting
+    """
+    fig, ax = plt.subplots(figsize=(10, 10))
+    
+    # Dynamic contrast adjustment
+    if np.any(max_map > 0):
+        vmin, vmax = np.percentile(max_map[max_map > 0], [5, 95])
+    else:
+        vmin, vmax = (0, 1)
+    
+    # Display intensity map
+    im = ax.imshow(max_map,
+                   cmap='hot',
+                   origin='lower',
+                   vmin=vmin, vmax=vmax,
+                   interpolation='nearest')
+    
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Max Intensity', fontsize=12)
+    
+    output_unit = args.get('OUTPUT_UNIT', 'nm') if args else 'nm'
+
+    # Add particle markers and labels
+    for i, rep in enumerate(representatives):
+        row, col = rep['row'], rep['col']
+        
+        particle_num = i + 1
+        
+        # Draw circle marker
+        circle = plt.Circle((col, row), 
+                           radius=1.5,
+                           edgecolor='white',
+                           facecolor='none',
+                           linewidth=2)
+        ax.add_patch(circle)
+        
+        # Particle number label
+        ax.text(col - 1, row + 3,
+                f'{particle_num}',
+                color='white',
+                fontsize=6,
+                fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
+        
+        # Peak wavelength/energy label (only show first peak for multi-peak)
+        if output_unit == 'eV':
+            energy = 1239.842 / rep['peak_wl']
+            ax.text(col - 3, row - 3,
+                    f'{energy:.3f} eV',
+                    color='yellow',
+                    fontsize=6,
+                    fontweight='bold',
+                    ha='left')
+        else:
+            ax.text(col - 3, row - 3,
+                    f"{rep['peak_wl']:.1f} nm",
+                    color='yellow',
+                    fontsize=6,
+                    fontweight='bold',
+                    ha='left')
+    
+    ax.set_xlabel('X (pixels)', fontsize=12)
+    ax.set_ylabel('Y (pixels)', fontsize=12)
+    ax.set_title(f'{sample_name} - Particle Map', fontsize=14)
+    
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    
+    print(f"[info] Saved particle map: {output_path}")

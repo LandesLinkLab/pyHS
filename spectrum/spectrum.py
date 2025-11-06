@@ -99,6 +99,7 @@ class SpectrumAnalyzer:
         # Statistics tracking
         stats = {
             'total_clusters': len(self.dataset.clusters),
+            'skipped_invalid': 0,
             'rejected_width': 0,
             'rejected_fitting': 0,
             'accepted': 0
@@ -133,7 +134,21 @@ class SpectrumAnalyzer:
             integrated_spectrum = integrated_spectrum / pixel_count
 
             # Skip invalid spectra
-            if pixel_count == 0 or integrated_spectrum.max() < 0.01:
+            if pixel_count == 0 or integrated_spectrum.max() < 0.0001:
+                print(f"  Cluster {cluster['label']}: Skipped (pixel_count={pixel_count}, max_intensity={integrated_spectrum.max():.4f})")
+                stats['skipped_invalid'] += 1
+                
+                # ✅ Store rejected spectrum
+                self.rejected_spectra.append({
+                    'cluster_label': cluster['label'],
+                    'row': center_row,
+                    'col': center_col,
+                    'spectrum': integrated_spectrum,
+                    'wavelengths': self.dataset.wvl,
+                    'reason': 'Invalid spectrum (low signal or no pixels)',
+                    'pixel_count': pixel_count,
+                    'max_intensity': integrated_spectrum.max()
+                })
                 continue
 
             # Store spectrum and metadata
@@ -289,6 +304,8 @@ class SpectrumAnalyzer:
         print("="*60)
         print(f"Total clusters: {stats['total_clusters']}")
         print(f"Accepted fits: {stats['accepted']}")
+        print(f"Skipped (invalid): {stats['skipped_invalid']}")
+        print(f"Attempted fits: {len(all_spectra)}")
         print(f"Rejected (width): {stats['rejected_width']}")
         print(f"Rejected (R²): {stats['rejected_fitting']}")
         print("="*60)
