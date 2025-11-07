@@ -47,7 +47,7 @@ args['BACKGROUND_PERCENTILE'] = 0.1  # Fraction of darkest pixels to use for glo
                                       # Matches MATLAB's standard approach for background estimation
 
 # Local background parameters (used when BACKGROUND_MODE = 'local')
-args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 20  # Search radius (pixels) around each particle for local background
+args['BACKGROUND_LOCAL_SEARCH_RADIUS'] = 3  # Search radius (pixels) around each particle for local background
 args['BACKGROUND_LOCAL_PERCENTILE'] = 1      # Percentile of darkest pixels within search area for background
 
 # ============================================================================
