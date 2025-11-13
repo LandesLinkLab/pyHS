@@ -235,6 +235,7 @@ class EChemAnalyzer:
                 for peak_idx in range(1, num_peaks + 1):
                     peak_nm = params.get(f'b{peak_idx}', 0)
                     fwhm_nm = params.get(f'c{peak_idx}', 0)
+                    height = params.get(f'a{peak_idx}', 0)
                     
                     if peak_nm > 0:
                         params[f'peakeV{peak_idx}'] = 1239.842 / peak_nm
@@ -244,15 +245,20 @@ class EChemAnalyzer:
                             )
                         else:
                             params[f'FWHMeV{peak_idx}'] = 0
+
+                        params[f'intensity{peak_idx}'] = height
+
                     else:
                         params[f'peakeV{peak_idx}'] = 0
                         params[f'FWHMeV{peak_idx}'] = 0
+                        params[f'intensity{peak_idx}'] = 0
             
             elif fitting_model == 'fano':
                 num_bright = self.args.get('NUM_BRIGHT_MODES', 1)
                 for mode_idx in range(1, num_bright + 1):
                     resonance_nm = params.get(f'bright{mode_idx}_lambda', 0)
                     gamma_nm = params.get(f'bright{mode_idx}_gamma', 0)
+                    coupling = params.get(f'bright{mode_idx}_c', 0)
                     
                     if resonance_nm > 0:
                         params[f'resonanceeV{mode_idx}'] = 1239.842 / resonance_nm
@@ -265,11 +271,32 @@ class EChemAnalyzer:
                         else:
                             params[f'gammaeV{mode_idx}'] = 0
                             params[f'gammanm{mode_idx}'] = 0
+                        
+                        if gamma_nm > 0 and coupling != 0:
+                            # Bright mode intensity at resonance
+                            peak_intensity = abs(coupling) ** 2
+                            params[f'intensity{mode_idx}'] = peak_intensity
+                        else:
+                            params[f'intensity{mode_idx}'] = 0
                     else:
                         params[f'resonanceeV{mode_idx}'] = 0
                         params[f'resonancenm{mode_idx}'] = 0
                         params[f'gammaeV{mode_idx}'] = 0
                         params[f'gammanm{mode_idx}'] = 0
+                        params[f'intensity{mode_idx}'] = 0
+                
+                num_dark = self.args.get('NUM_DARK_MODES', 0)
+                for dark_idx in range(1, num_dark + 1):
+                    d = params.get(f'dark{dark_idx}_d', 0)
+                    lam = params.get(f'dark{dark_idx}_lambda', 0)
+                    Gamma = params.get(f'dark{dark_idx}_Gamma', 0)
+                    
+                    if lam > 0 and Gamma > 0 and d != 0:
+                        # Dark mode intensity at resonance: I = |d|²
+                        dark_intensity = abs(d) ** 2
+                        params[f'dark_intensity{dark_idx}'] = dark_intensity
+                    else:
+                        params[f'dark_intensity{dark_idx}'] = 0
             
             # Store additional metadata
             params['time'] = self.dataset.spec_times[original_idx]
@@ -425,7 +452,7 @@ class EChemAnalyzer:
             # Extract voltage for this cycle
             cycle_voltage = self.dataset.voltages[start_idx:end_idx]
             
-            # ✅ 수정: 모델에 따라 다른 키 사용
+            # 수정: 모델에 따라 다른 키 사용
             if fitting_model == 'fano':
                 # Fano 모델: resonanceeV1, gammaeV1, c1 사용
                 peak_key = 'resonanceeV1'
@@ -472,7 +499,7 @@ class EChemAnalyzer:
         
         fitting_model = self.args.get('FITTING_MODEL', 'lorentzian')
         
-        # ✅ 수정: 모델에 따라 피크 개수 다르게 설정
+        # 수정: 모델에 따라 피크 개수 다르게 설정
         if fitting_model == 'fano':
             num_peaks = self.args.get('NUM_BRIGHT_MODES', 1)
         else:
@@ -506,7 +533,7 @@ class EChemAnalyzer:
             # 피크별 재구성 스펙트럼
             peak_spectra_reconstructed = np.zeros((n_spectra, n_wavelengths))
             
-            # ✅✅✅ 수정: 피팅 모델에 따라 다른 재구성 함수 사용
+            # 수정: 피팅 모델에 따라 다른 재구성 함수 사용
             if fitting_model == 'lorentzian':
                 # Lorentzian 모델 재구성
                 def lorentz_single_peak(x, a, b, c):
@@ -540,13 +567,13 @@ class EChemAnalyzer:
             else:
                 raise ValueError(f"Unknown fitting model: {fitting_model}")
             
-            # ✅ 디버그: 재구성 스펙트럼 강도 확인
+            # 디버그: 재구성 스펙트럼 강도 확인
             max_intensity = peak_spectra_reconstructed.max()
             mean_intensity = peak_spectra_reconstructed.mean()
             print(f"    Peak {peak_idx+1} reconstructed: max={max_intensity:.6f}, mean={mean_intensity:.6f}")
             
             if max_intensity < 1e-8:
-                print(f"    ⚠️ WARNING: Peak {peak_idx+1} has very low intensity!")
+                print(f"[warning] Peak {peak_idx+1} has very low intensity!")
             
             # 재구성 스펙트럼을 에너지 축으로 올바르게 변환
             energy_full = 1239.842 / self.dataset.wavelengths
@@ -574,7 +601,7 @@ class EChemAnalyzer:
             
             ax_heat.set_ylabel('Energy (eV)', fontsize=12, fontweight='bold')
             
-            # ✅ 타이틀에 모델명 추가
+            # 타이틀에 모델명 추가
             if fitting_model == 'fano':
                 title_suffix = f'(Bright Mode {peak_idx+1})'
             else:
@@ -600,7 +627,7 @@ class EChemAnalyzer:
             # Subplot 3: Resonance
             ax_res = axes[2]
             
-            # ✅ 수정: 모델에 따라 다른 키 사용
+            # 수정: 모델에 따라 다른 키 사용
             if fitting_model == 'fano':
                 peak_key = f'resonanceeV{peak_idx+1}'  # Fano는 resonance
             else:
@@ -609,7 +636,7 @@ class EChemAnalyzer:
             peaks = [p.get(peak_key, np.nan) for p in self.fitted_params]
             times = [p.get('time', np.nan) for p in self.fitted_params]
             
-            # ✅ 수정: valid_mask를 peaks와 times 둘 다 체크
+            # 수정: valid_mask를 peaks와 times 둘 다 체크
             valid_mask = (~np.isnan(peaks)) & (~np.isnan(times))
             times_valid = [t for t, v in zip(times, valid_mask) if v]
             peaks_valid = [pk for pk, v in zip(peaks, valid_mask) if v]
@@ -617,7 +644,7 @@ class EChemAnalyzer:
             if len(peaks_valid) > 0:
                 ax_res.plot(times_valid, peaks_valid, 'b-', linewidth=1.5, marker='o', markersize=3)
             else:
-                print(f"    ⚠️ WARNING: No valid resonance data for peak {peak_idx+1}")
+                print(f"[warning] No valid resonance data for peak {peak_idx+1}")
             
             if fitting_model == 'fano':
                 ylabel = f'Bright {peak_idx+1}\nResonance (eV)'
@@ -632,7 +659,7 @@ class EChemAnalyzer:
             # Subplot 4: FWHM/Gamma
             ax_fwhm = axes[3]
             
-            # ✅✅✅ 수정: 모델에 따라 다른 키 사용
+            # 모델에 따라 다른 키 사용
             if fitting_model == 'fano':
                 fwhm_key = f'gammaeV{peak_idx+1}'   # Fano의 경우 gamma (linewidth)
             else:
@@ -648,7 +675,7 @@ class EChemAnalyzer:
             if len(fwhms_valid) > 0:
                 ax_fwhm.plot(times_valid, fwhms_valid, 'g-', linewidth=1.5, marker='s', markersize=3)
             else:
-                print(f"    ⚠️ WARNING: No valid gamma/FWHM data for peak {peak_idx+1}")
+                print(f"[warning] No valid gamma/FWHM data for peak {peak_idx+1}")
             
             if fitting_model == 'fano':
                 ylabel = f'Bright {peak_idx+1}\nγ (eV)'
@@ -662,19 +689,17 @@ class EChemAnalyzer:
             
             # Subplot 5: Intensity Change (%)
             ax_int = axes[4]
-            
-            # ✅✅✅ 수정: 모델에 따라 다른 키 사용
+
             if fitting_model == 'fano':
-                # Fano의 경우 c 파라미터 (coupling strength)를 intensity로 사용
-                area_key = f'c{peak_idx+1}'
+                # Fano의 경우 계산된 peak intensity 사용
+                area_key = f'intensity{peak_idx+1}'
             else:
-                # Lorentzian의 경우 area 사용
-                area_key = f'area{peak_idx+1}'
-            
+                # Lorentzian의 경우 intensity 사용
+                area_key = f'intensity{peak_idx+1}'
+
             areas = [p.get(area_key, 0) for p in self.fitted_params]
             times_all = [p.get('time', np.nan) for p in self.fitted_params]
             
-            # ✅ 수정: nan 제거
             valid_mask = (~np.isnan(times_all)) & (np.array(areas) != 0)
             times_valid = [t for t, v in zip(times_all, valid_mask) if v]
             areas_valid = [a for a, v in zip(areas, valid_mask) if v]
@@ -684,10 +709,10 @@ class EChemAnalyzer:
                 intensity_changes = [(a - baseline_area) / baseline_area * 100 for a in areas_valid]
                 ax_int.plot(times_valid, intensity_changes, 'm-', linewidth=1.5, marker='^', markersize=3)
             else:
-                print(f"    ⚠️ WARNING: No valid intensity data for peak {peak_idx+1}")
+                print(f"[warning]: No valid intensity data for peak {peak_idx+1}")
             
             if fitting_model == 'fano':
-                ylabel = f'Bright {peak_idx+1}\nCoupling Δ (%)'
+                ylabel = f'Bright {peak_idx+1}\nIntensity Δ (%)'
             else:
                 ylabel = f'Peak {peak_idx+1}\nIntensity Δ (%)'
             ax_int.set_ylabel(ylabel, fontsize=10, fontweight='bold')
@@ -716,11 +741,10 @@ class EChemAnalyzer:
             
             param_data = np.array(param_data)
             
-            # ✅ 헤더도 모델에 따라 다르게
             if fitting_model == 'fano':
-                header = f"Time(s)\tVoltage(V)\tResonance(eV)\tGamma(eV)\tCoupling(a.u.)\nBright_{peak_idx+1}"
+                header = f"Time(s)\tVoltage(V)\tResonance(eV)\tGamma(eV)\tIntensity(a.u.)\nBright_{peak_idx+1}"
             else:
-                header = f"Time(s)\tVoltage(V)\tResonance(eV)\tFWHM(eV)\tArea(a.u.)\nPeak_{peak_idx+1}"
+                header = f"Time(s)\tVoltage(V)\tResonance(eV)\tFWHM(eV)\tIntensity(a.u.)\nPeak_{peak_idx+1}"
             
             np.savetxt(data_dir / f"{self.dataset.sample_name}_peak{peak_idx+1}_parameters.txt",
                        param_data,
@@ -730,7 +754,7 @@ class EChemAnalyzer:
             print(f"  Saved peak {peak_idx+1} heatmap with parameters")
         
         # ========================================
-        # ✅✅✅ 추가: Dark modes 그래프 생성 (Fano 모델인 경우)
+        # Dark modes 그래프 생성 (Fano 모델인 경우)
         # ========================================
         if fitting_model == 'fano':
             num_dark = self.args.get('NUM_DARK_MODES', 0)
@@ -780,7 +804,7 @@ class EChemAnalyzer:
                 print(f"    Dark {dark_idx+1} reconstructed: max={max_intensity:.6f}, mean={mean_intensity:.6f}")
                 
                 if max_intensity < 1e-8:
-                    print(f"    ⚠️ WARNING: Dark Mode {dark_idx+1} has very low intensity!")
+                    print(f"[warning] Dark Mode {dark_idx+1} has very low intensity!")
                 
                 # 재구성 스펙트럼을 에너지 축으로 변환
                 energy_full = 1239.842 / self.dataset.wavelengths
@@ -845,7 +869,7 @@ class EChemAnalyzer:
                 if len(resonances_valid) > 0:
                     ax_res.plot(times_valid, resonances_valid, 'b-', linewidth=1.5, marker='o', markersize=3)
                 else:
-                    print(f"    ⚠️ WARNING: No valid resonance data for dark mode {dark_idx+1}")
+                    print(f"[warning]: No valid resonance data for dark mode {dark_idx+1}")
                 
                 ax_res.set_ylabel(f'Dark {dark_idx+1}\nResonance (eV)', fontsize=10, fontweight='bold')
                 ax_res.tick_params(labelsize=9)
@@ -879,7 +903,7 @@ class EChemAnalyzer:
                 if len(gammas_valid) > 0:
                     ax_gamma.plot(times_valid, gammas_valid, 'g-', linewidth=1.5, marker='s', markersize=3)
                 else:
-                    print(f"    ⚠️ WARNING: No valid gamma data for dark mode {dark_idx+1}")
+                    print(f"[warning]: No valid gamma data for dark mode {dark_idx+1}")
                 
                 ax_gamma.set_ylabel(f'Dark {dark_idx+1}\nΓ (eV)', fontsize=10, fontweight='bold')
                 ax_gamma.tick_params(labelsize=9)
@@ -888,27 +912,27 @@ class EChemAnalyzer:
                 ax_gamma.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
                 
                 # Subplot 5: Amplitude Change (%)
-                ax_amp = axes[4]
+                ax_int = axes[4]
                 
-                amplitudes = [p.get(f'dark{dark_idx+1}_d', 0) for p in self.fitted_params]
+                intensities = [p.get(f'dark_intensity{dark_idx+1}', 0) for p in self.fitted_params]
                 times_all = [p.get('time', np.nan) for p in self.fitted_params]
-                
-                valid_mask = (~np.isnan(times_all)) & (np.array(amplitudes) != 0)
+
+                valid_mask = (~np.isnan(times_all)) & (np.array(intensities) != 0)
                 times_valid = [t for t, v in zip(times_all, valid_mask) if v]
-                amplitudes_valid = [a for a, v in zip(amplitudes, valid_mask) if v]
-                
-                if len(amplitudes_valid) > 0 and amplitudes_valid[0] != 0:
-                    baseline_amp = amplitudes_valid[0]
-                    amplitude_changes = [(a - baseline_amp) / baseline_amp * 100 for a in amplitudes_valid]
-                    ax_amp.plot(times_valid, amplitude_changes, 'm-', linewidth=1.5, marker='^', markersize=3)
+                intensities_valid = [a for a, v in zip(intensities, valid_mask) if v]
+
+                if len(intensities_valid) > 0 and intensities_valid[0] != 0:
+                    baseline_intensity = intensities_valid[0]
+                    intensity_changes = [(a - baseline_intensity) / baseline_intensity * 100 for a in intensities_valid]
+                    ax_int.plot(times_valid, intensity_changes, 'm-', linewidth=1.5, marker='^', markersize=3)
                 else:
-                    print(f"    ⚠️ WARNING: No valid amplitude data for dark mode {dark_idx+1}")
-                
-                ax_amp.set_ylabel(f'Dark {dark_idx+1}\nAmplitude Δ (%)', fontsize=10, fontweight='bold')
-                ax_amp.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
-                ax_amp.tick_params(labelsize=9)
-                ax_amp.grid(True, alpha=0.3)
-                ax_amp.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
+                    print(f"[warning]: No valid intensity data for dark mode {dark_idx+1}")
+
+                ax_int.set_ylabel(f'Dark {dark_idx+1}\nIntensity Δ (%)', fontsize=10, fontweight='bold')
+                ax_int.set_xlabel('Time (s)', fontsize=12, fontweight='bold')
+                ax_int.tick_params(labelsize=9)
+                ax_int.grid(True, alpha=0.3)
+                ax_int.set_xlim(self.dataset.spec_times.min(), self.dataset.spec_times.max())
                 
                 plt.tight_layout()
                 plt.savefig(output_dir / f"{self.dataset.sample_name}_spectral_heatmap_dark{dark_idx+1}_eV.png", dpi=150)
@@ -917,18 +941,20 @@ class EChemAnalyzer:
                 # 데이터 저장
                 param_data = []
                 for i, p in enumerate(self.fitted_params):
+                    intensity_val = p.get(f'dark_intensity{dark_idx+1}', 0)
+
                     row = [
                         p.get('time', np.nan),
                         self.dataset.voltages[i] if i < len(self.dataset.voltages) else np.nan,
                         resonances[i] if i < len(resonances) else np.nan,
                         gammas[i] if i < len(gammas) else np.nan,
-                        amplitudes[i] if i < len(amplitudes) else 0
+                        intensity_val
                     ]
                     param_data.append(row)
                 
                 param_data = np.array(param_data)
                 
-                header = f"Time(s)\tVoltage(V)\tResonance(eV)\tGamma(eV)\tAmplitude(a.u.)\nDark_{dark_idx+1}"
+                header = f"Time(s)\tVoltage(V)\tResonance(eV)\tGamma(eV)\tIntensity(a.u.)\nDark_{dark_idx+1}"
                 
                 np.savetxt(data_dir / f"{self.dataset.sample_name}_dark{dark_idx+1}_parameters.txt",
                            param_data,
@@ -956,8 +982,7 @@ class EChemAnalyzer:
 
         output_unit = self.args.get('OUTPUT_UNIT', 'eV')
         fitting_model = self.args.get('FITTING_MODEL', 'lorentzian')
-        
-        # ✅ 모델에 따라 피크 개수 다르게 설정
+
         if fitting_model == 'fano':
             num_peaks = self.args.get('NUM_BRIGHT_MODES', 1)
         else:
@@ -967,7 +992,7 @@ class EChemAnalyzer:
             
             # ===== Save text data =====
             if output_unit == 'eV':
-                # ✅ 수정: 제대로 정렬해서 변환
+
                 energy = 1239.842 / self.dataset.wavelengths
                 
                 # energy 증가 순서로 정렬 (argsort 사용)
@@ -980,13 +1005,12 @@ class EChemAnalyzer:
 
                 header = f"Energy(eV)\tIntensity\tFit\n"
                 
-                # ✅ 모델별로 다른 헤더 정보 추가
                 if fitting_model == 'fano':
-                    # Fano 모델: Bright modes 정보
                     for peak_idx in range(1, num_peaks + 1):
                         resonance_ev = param.get(f'resonanceeV{peak_idx}', 0)
                         gamma_ev = param.get(f'gammaeV{peak_idx}', 0)
                         coupling = param.get(f'c{peak_idx}', 0)
+                        intensity = param.get(f'intensity{peak_idx}', 0)
                         
                         if resonance_ev > 0:
                             resonance_nm = 1239.842 / resonance_ev
@@ -995,12 +1019,13 @@ class EChemAnalyzer:
                                               1239.842/(resonance_ev + gamma_ev/2))
                             else:
                                 gamma_nm = 0
-                            header += f"# Bright {peak_idx}: {resonance_ev:.3f} eV ({resonance_nm:.1f} nm), γ: {gamma_ev:.3f} eV ({gamma_nm:.1f} nm), c: {coupling:.2f}\n"
-                else:
-                    # Lorentzian 모델: Peak 정보
+                            header += f"# Bright {peak_idx}: {resonance_ev:.3f} eV ({resonance_nm:.1f} nm), γ: {gamma_ev:.3f} eV ({gamma_nm:.1f} nm), c: {coupling:.2f}, I: {intensity:.3f}\n"
+                
+                elif fitting_model == 'lorentzian':
                     for peak_idx in range(1, num_peaks + 1):
                         peak_ev = param.get(f'peakeV{peak_idx}', 0)
                         fwhm_ev = param.get(f'FWHMeV{peak_idx}', 0)
+                        intensity = param.get(f'intensity{peak_idx}', 0)
                         
                         if peak_ev > 0:
                             peak_nm = 1239.842 / peak_ev
@@ -1008,7 +1033,7 @@ class EChemAnalyzer:
                                 fwhm_nm = abs(1239.842/(peak_ev - fwhm_ev/2) - 1239.842/(peak_ev + fwhm_ev/2))
                             else:
                                 fwhm_nm = 0
-                            header += f"# Peak {peak_idx}: {peak_ev:.3f} eV ({peak_nm:.1f} nm), FWHM: {fwhm_ev:.3f} eV ({fwhm_nm:.1f} nm)\n"
+                            header += f"# Peak {peak_idx}: {peak_ev:.3f} eV ({peak_nm:.1f} nm), FWHM: {fwhm_ev:.3f} eV ({fwhm_nm:.1f} nm), I: {intensity:.3f}\n"                     
                 
                 header += f"# Spectrum {i+1}, Time={param['time']:.2f}s, Voltage={param['voltage']:.3f}V\n"
                 header += f"# R²: {param['r2']:.4f}, SNR: {param['snr']:.1f}"
@@ -1023,7 +1048,6 @@ class EChemAnalyzer:
 
                 header = f"Wavelength(nm)\tIntensity\tFit\n"
                 
-                # ✅ 모델별로 다른 헤더 정보 추가
                 if fitting_model == 'fano':
                     # Fano 모델: Bright modes 정보
                     for peak_idx in range(1, num_peaks + 1):
@@ -1084,9 +1108,12 @@ class EChemAnalyzer:
             if (i + 1) % 10 == 0 or (i + 1) == len(self.fitted_params):
                 print(f"  Saved {i+1}/{len(self.fitted_params)} spectra (text + 2 plots)")
 
-            if (i + 1) % 10 == 0:
-                gc.collect()  # 가비지 컬렉션 실행
-                plt.close('all')  # 모든 matplotlib figure 닫기                
+            if (i + 1) % 5 == 0:
+                plt.close('all')
+                gc.collect()  
+
+        plt.close('all')
+        gc.collect()
         
         print(f"[info] Saved {len(self.fitted_params)} spectral files to {output_dir}")
         print(f"[info] Saved {len(self.fitted_params)} plots with fit to {plots_dir}")
