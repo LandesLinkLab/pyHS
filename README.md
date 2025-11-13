@@ -8,5 +8,5 @@ conda install -n py-hs anaconda::scipy\
 conda install -n py-hs conda-forge::matplotlib\
 conda install -n py-hs anaconda::scikit-image\
 conda install -n py-hs conda-forge::nptdms\
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu \
 pip install triton==3.1.0
