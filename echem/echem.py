@@ -824,10 +824,19 @@ class EChemAnalyzer:
                 
                 # Subplot 3: Resonance
                 ax_res = axes[2]
-                
-                resonance_key = f'dark_resonanceeV{dark_idx+1}'
-                resonances = [p.get(resonance_key, np.nan) for p in self.fitted_params]
-                times = [p.get('time', np.nan) for p in self.fitted_params]
+
+                resonances = []
+                times = []
+                for p in self.fitted_params:
+                    lam_nm = p.get(f'dark{dark_idx+1}_lambda', np.nan)
+                    time_val = p.get('time', np.nan)
+                    
+                    if not np.isnan(lam_nm) and lam_nm > 0:
+                        resonances.append(1239.842 / lam_nm)  # nm → eV
+                    else:
+                        resonances.append(np.nan)
+                    
+                    times.append(time_val)
                 
                 valid_mask = (~np.isnan(resonances)) & (~np.isnan(times))
                 times_valid = [t for t, v in zip(times, valid_mask) if v]
@@ -847,9 +856,22 @@ class EChemAnalyzer:
                 # Subplot 4: Linewidth (Gamma)
                 ax_gamma = axes[3]
                 
-                gamma_key = f'dark_GammaeV{dark_idx+1}'
-                gammas = [p.get(gamma_key, np.nan) for p in self.fitted_params]
-                
+                gammas = []
+                times = []
+                for p in self.fitted_params:
+                    Gamma_nm = p.get(f'dark{dark_idx+1}_Gamma', np.nan)
+                    lam_nm = p.get(f'dark{dark_idx+1}_lambda', 700)
+                    time_val = p.get('time', np.nan)
+                    
+                    if not np.isnan(Gamma_nm) and Gamma_nm > 0 and lam_nm > 0:
+                        # Γ를 eV로 변환: Γ_eV ≈ (1239.842 / λ²) × Γ_nm
+                        gamma_eV = (1239.842 / (lam_nm ** 2)) * Gamma_nm
+                        gammas.append(gamma_eV)
+                    else:
+                        gammas.append(np.nan)
+                    
+                    times.append(time_val)
+
                 valid_mask = (~np.isnan(gammas)) & (~np.isnan(times))
                 times_valid = [t for t, v in zip(times, valid_mask) if v]
                 gammas_valid = [g for g, v in zip(gammas, valid_mask) if v]
@@ -868,8 +890,7 @@ class EChemAnalyzer:
                 # Subplot 5: Amplitude Change (%)
                 ax_amp = axes[4]
                 
-                amp_key = f'dark_d{dark_idx+1}'
-                amplitudes = [p.get(amp_key, 0) for p in self.fitted_params]
+                amplitudes = [p.get(f'dark{dark_idx+1}_d', 0) for p in self.fitted_params]
                 times_all = [p.get('time', np.nan) for p in self.fitted_params]
                 
                 valid_mask = (~np.isnan(times_all)) & (np.array(amplitudes) != 0)
