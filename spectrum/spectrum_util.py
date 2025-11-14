@@ -129,7 +129,7 @@ class LorentzianFitter:
             reg_loss = reg_loss + reg_width * excess.pow(2).sum()
         
         # 3. Position tolerance constraint (soft penalty)
-        reg_position = self.args.get('REG_POSITION_TOLERANCE', 0.0)
+        reg_position = self.args.get('REG_POSITION_CONSTRAINT', 0.0)
         if reg_position > 0:
             tolerance_config = self.args.get('PEAK_POSITION_TOLERANCE', 50.0)
             
@@ -250,9 +250,7 @@ class LorentzianFitter:
         # Optional: Learning rate scheduler
         use_scheduler = self.args.get('USE_LR_SCHEDULER', False)
         if use_scheduler:
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='min', factor=0.5, patience=100, verbose=False
-            )
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=100)
         
         # Optimization loop
         print_every = self.args.get('PRINT_EVERY', 100)
