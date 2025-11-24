@@ -84,7 +84,7 @@ args['DARK_HEIGHT_INITIAL_GUESS'] = [0.5]  # Coupling strengths d (REQUIRED!)
                                             # Example for 2 dark: [0.5, 0.4]
                                             # MUST match NUM_DARK_MODES
 
-args['DARK_PHASE_INITIAL_GUESS'] = [0.0]  # Phases θ in radians (OPTIONAL)
+args['DARK_PHASE_INITIAL_GUESS'] = [np.pi]  # Phases θ in radians (OPTIONAL)
                                            # Default: [0.0] for all dark modes
                                            # Example for 2 dark: [0.0, 1.57]
                                            # MUST match NUM_DARK_MODES
