@@ -180,20 +180,7 @@ class EChemAnalyzer:
             else:
                 fwhm_ev = 0
             
-            # Quality Filter 1: Negative R²
-            if r2 < 0:
-                print(f"  Spectrum {original_idx}: Rejected - R² negative ({r2:.3f})")
-                stats['rejected_negative_r2'] += 1
-                self.rejected_fits.append({
-                    'index': original_idx,
-                    'time': self.dataset.spec_times[original_idx],
-                    'voltage': self.dataset.voltages[original_idx],
-                    'reason': f'R² negative ({r2:.3f})',
-                    'fwhm': fwhm_ev,
-                    'r2': r2
-                })
-            
-            # Quality Filter 2: Width limit (in eV)
+            # Quality Filter 1: Width limit (in eV)
             if fwhm_ev > max_width:
                 print(f"  Spectrum {original_idx}: Rejected - Width too large ({fwhm_ev:.3f} eV > {max_width} eV)")
                 stats['rejected_width'] += 1
@@ -206,7 +193,7 @@ class EChemAnalyzer:
                     'r2': r2
                 })
             
-            # Quality Filter 3: R² threshold
+            # Quality Filter 2: R² threshold
             if r2 < min_r2:
                 print(f"  Spectrum {original_idx}: Rejected - R² too low ({r2:.3f} < {min_r2})")
                 stats['rejected_fitting'] += 1
