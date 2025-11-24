@@ -920,7 +920,7 @@ def plot_spectrum(wavelengths: np.ndarray,
         sort_idx = np.arange(len(wavelengths))
     
     # Plot data
-    ax.plot(x_plot, spectrum, 'o', markersize=3, color='tab:blue', label='Data', alpha=0.6)
+    ax.plot(x_plot, spectrum, 'o', markersize=3, color='tab:blue', alpha=0.6)
     
     if show_fit and fit is not None:
         # Plot total fit
@@ -971,11 +971,10 @@ def plot_spectrum(wavelengths: np.ndarray,
                     ax.plot(x_plot, I_dark, '-', linewidth=1.5, color='red',
                            label=f'Dark {j}', alpha=0.7)
     
-    ax.set_xlabel(x_label, fontsize=12)
-    ax.set_ylabel('Intensity (a.u.)', fontsize=12)
-    ax.set_title(title, fontsize=14)
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel(x_label, fontsize=18)
+    ax.set_ylabel('Intensity (a.u.)', fontsize=18)
+    ax.set_title(title, fontsize=18)
+    ax.tick_params(axis='both', labelsize=14)
     
     # Add parameter text
     if params is not None and show_fit:
@@ -1061,7 +1060,7 @@ def save_dfs_particle_map(max_map: np.ndarray,
                    interpolation='nearest')
     
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label('Max Intensity', fontsize=12)
+    cbar.set_label('Max Intensity', fontsize=18)
     
     output_unit = args.get('OUTPUT_UNIT', 'nm') if args else 'nm'
 
@@ -1104,9 +1103,10 @@ def save_dfs_particle_map(max_map: np.ndarray,
                     fontweight='bold',
                     ha='left')
     
-    ax.set_xlabel('X (pixels)', fontsize=12)
-    ax.set_ylabel('Y (pixels)', fontsize=12)
+    ax.set_xlabel('X (pixels)', fontsize=18)
+    ax.set_ylabel('Y (pixels)', fontsize=18)
     ax.set_title(f'{sample_name} - Particle Map', fontsize=14)
+    ax.tick_params(axis='both', labelsize=14)
     
     plt.tight_layout()
     fig.savefig(output_path, dpi=300, bbox_inches='tight')
