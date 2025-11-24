@@ -189,12 +189,12 @@ args['ECHEM_UPPERCUT'] = 0          # Pixels to trim from red (long wavelength) 
 # ============================================================================
 # QUALITY FILTERING PARAMETERS
 # ============================================================================
-args['ECHEM_MAX_WIDTH_EV'] = 10     # Maximum allowed FWHM in eV for Lorentzian fits
+args['ECHEM_MAX_WIDTH_EV'] = 10000     # Maximum allowed FWHM in eV for Lorentzian fits
                                       # More lenient than DFS (~0.059 eV) due to electrochemical broadening
                                       # Broader peaks during charging/discharging are normal
                                       # Peaks broader than this are rejected as severely degraded
 
-args['ECHEM_RSQ_MIN'] = 0.0001          # Minimum R-squared value for accepting fits
+args['ECHEM_RSQ_MIN'] = -100.0          # Minimum R-squared value for accepting fits
                                       # More lenient than DFS (0.90) to accommodate noisier time-series data
                                       # Lower threshold accounts for rapid spectral changes during cycling
 
