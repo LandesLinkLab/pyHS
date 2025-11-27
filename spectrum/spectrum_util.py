@@ -993,7 +993,7 @@ def plot_spectrum(wavelengths: np.ndarray,
             for i in range(1, num_bright + 1):
        if f'bright{i}_lambda' in params:
                     # 🔧 Intensity (coupling) 정보 추가
-                    c = params.get(f'bright{i}_c', 0)
+                 = params.get(f'bright{i}_c', 0)
                     param_text += f"Bright {i}: λ={params[f'bright{i}_lambda']:.1f} nm, γ={params[f'bright{i}_gamma']:.1f} nm, c={c:.2f}\n"
             
             num_dark = sum(1 for key in params.keys() if 'dark' in key and '_lambda' in key)
@@ -1001,7 +1001,7 @@ def plot_spectrum(wavelengths: np.ndarray,
                 param_text += "\n"
                 for j in range(1, num_dark                if f'dark{j}_lambda' in params:
                         # 🔧 Intensity (d)와 Phase (θ) 정보 추가
-                        d = params.get(f'dark{j}_d', 0)
+         d = params.get(f'dark{j}_d', 0)
                         theta = params.get(f'dark{j}_theta', 0)
                         theta_pi = theta / np.pi  # radian → degree
                         param_text += f"Dark {j}: λ={params[f'dark{j}_lambda']:.1f} nm, Γ={params[f'dark{j}_Gamma']:.1f} nm\n"
@@ -1009,7 +1009,7 @@ def plot_spectrum(wavelengths: np.ndarray,
         
         if param_text:
             ax.text(0.02, 0.98, param_text.strip(), transform=ax.transAxes,
-                   verticalalignment='top', fontsize=9,
+                   verlignment='top', fontsize=9,
                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout()
@@ -1112,3 +1112,4 @@ def save_dfs_particle_map(max_map: np.ndarray,
     plt.close(fig)
     
     print(f"[info] Saved particle map: {output_path}")
+
