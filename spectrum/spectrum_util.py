@@ -970,6 +970,29 @@ def plot_spectrum(wavelengths: np.ndarray,
                     
                     ax.plot(x_plot, I_dark, '-', linewidth=1.5, color='red',
                            label=f'Dark {j}', alpha=0.7)
+
+        elif fitting_model == 'lorentzian' and params is not None:
+
+            num_peaks = sum(1 for key in params.keys() if key.startswith('b') and key[1:].isdigit())
+
+            for i in range(1, num_peaks + 1):
+
+                a = params.get(f'a{i}', 0)
+                b = params.get(f'b{i}', 0)
+                c = params.get(f'c{i}', 0)
+
+                if a != 0 and b > 0 and c > 0:
+                    # Calculate single Lorentzian peak
+                    wl_nm = wavelengths
+                    I_peak = (2*a/np.pi) * (c / (4*(wl_nm - b)**2 + c**2))
+                    
+                    # Sort if eV
+                    if output_unit == 'eV':
+                        I_peak = I_peak[sort_idx]
+                    
+                    # 🔧 단색 통일: 모든 피크를 보라색(purple)으로 표시
+                    ax.plot(x_plot, I_peak, '-', linewidth=1.5, color='purple',
+                           label=f'Peak {i}', alpha=0.7)
     
     ax.set_xlabel(x_label, fontsize=18)
     ax.set_ylabel('Intensity (a.u.)', fontsize=18)
