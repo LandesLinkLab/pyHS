@@ -48,27 +48,24 @@ args['FITTING_MODEL'] = 'lorentzian'  # Using Lorentzian model
 args['NUM_PEAKS'] = 3  # 1: Single peak, 2: Two peaks, 3+: Multiple peaks
 
 # ⚠️ CRITICAL: Initial guesses (MUST PROVIDE FOR EACH PEAK)
-args['PEAK_POSITION_INITIAL_GUESS'] = [580, 640, 820]  # List of positions in nm (REQUIRED!)
+args['PEAK_POSITION_INITIAL_GUESS'] = [580, 650, 820]  # List of positions in nm (REQUIRED!)
                                                 # Example for 2 peaks: [600, 800]
                                                 # MUST match NUM_PEAKS
 
-args['PEAK_WIDTH_INITIAL_GUESS'] = [120, 40, 70]  # List of FWHMs in nm (REQUIRED!)
+args['PEAK_WIDTH_INITIAL_GUESS'] = [80, 30, 60]  # List of FWHMs in nm (REQUIRED!)
                                             # Example for 2 peaks: [30, 50]
                                             # MUST match NUM_PEAKS
 
-args['PEAK_HEIGHT_INITIAL_GUESS'] = [63, 5, 35]  # List of amplitudes (REQUIRED!)
+args['PEAK_HEIGHT_INITIAL_GUESS'] = [63, 5, 28]  # List of amplitudes (REQUIRED!)
                                             # Normalized (typically 0.1 - 1.0)
                                             # MUST match NUM_PEAKS
 
 # Constraints
-args['PEAK_WIDTH_MAX'] = [150, 50, 100]  # Max FWHM per peak
+args['PEAK_WIDTH_MAX'] = [120, 60, 60]  # Max FWHM per peak
                                   # Single value: applies to all peaks
                                   # List: [80, 120] for different max per peak
 
-args['PEAK_POSITION_TOLERANCE'] = [5, 5, 30]  # Allowed deviation from initial guess (nm)
-                                            # None: No constraint
-                                            # Single value: applies to all peaks
-                                            # List: different constraint per peak
+args['PEAK_POSITION_TOLERANCE'] = [10, 10, 30]  # Allowed deviation from initial guess (nm)
 
 args['PEAK_MIN_DISTANCE'] = 50.0  # Minimum distance between peaks (nm)
                                    # Only used when NUM_PEAKS > 1
@@ -124,7 +121,7 @@ args['ECHEM_RSQ_MIN'] = 0.0001       # Minimum R-squared value for accepting fit
 args['FIG_DPI'] = 300  # Resolution (dots per inch) for saved figures
 args['ECHEM_CYCLE_PLOT_START'] = 1  # First cycle to display in detail plots
 args['ECHEM_CYCLE_PLOT_END'] = 4    # Last cycle to display in detail plots
-args['OUTPUT_UNIT'] = 'nm'  # Unit for spectral output: 'nm' or 'eV'
+args['OUTPUT_UNIT'] = 'eV'  # Unit for spectral output: 'nm' or 'eV'
 
 # ============================================================================
 # DEBUG AND DEVELOPMENT SETTINGS

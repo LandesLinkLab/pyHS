@@ -990,8 +990,7 @@ def plot_spectrum(wavelengths: np.ndarray,
                     if output_unit == 'eV':
                         I_peak = I_peak[sort_idx]
                     
-                    # 🔧 단색 통일: 모든 피크를 보라색(purple)으로 표시
-                    ax.plot(x_plot, I_peak, '-', linewidth=1.5, color='purple',
+                    ax.plot(x_plot, I_peak, '-', linewidth=1.5, color='teal',
                            label=f'Peak {i}', alpha=0.7)
     
     ax.set_xlabel(x_label, fontsize=18)
