@@ -48,7 +48,7 @@ args['FITTING_MODEL'] = 'lorentzian'  # Using Lorentzian model
 args['NUM_PEAKS'] = 3  # 1: Single peak, 2: Two peaks, 3+: Multiple peaks
 
 # ⚠️ CRITICAL: Initial guesses (MUST PROVIDE FOR EACH PEAK)
-args['PEAK_POSITION_INITIAL_GUESS'] = [580, 640, 750]  # List of positions in nm (REQUIRED!)
+args['PEAK_POSITION_INITIAL_GUESS'] = [580, 640, 780]  # List of positions in nm (REQUIRED!)
                                                 # Example for 2 peaks: [600, 800]
                                                 # MUST match NUM_PEAKS
 

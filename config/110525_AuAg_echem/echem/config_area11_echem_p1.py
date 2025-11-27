@@ -48,7 +48,7 @@ args['FITTING_MODEL'] = 'lorentzian'  # Using Lorentzian model
 args['NUM_PEAKS'] = 3  # 1: Single peak, 2: Two peaks, 3+: Multiple peaks
 
 # ⚠️ CRITICAL: Initial guesses (MUST PROVIDE FOR EACH PEAK)
-args['PEAK_POSITION_INITIAL_GUESS'] = [580, 640, 750]  # List of positions in nm (REQUIRED!)
+args['PEAK_POSITION_INITIAL_GUESS'] = [580, 640, 688]  # List of positions in nm (REQUIRED!)
                                                 # Example for 2 peaks: [600, 800]
                                                 # MUST match NUM_PEAKS
 
@@ -61,7 +61,7 @@ args['PEAK_HEIGHT_INITIAL_GUESS'] = [63, 10, 4]  # List of amplitudes (REQUIRED!
                                             # MUST match NUM_PEAKS
 
 # Constraints
-args['PEAK_WIDTH_MAX'] = [120, 70, 100]  # Max FWHM per peak
+args['PEAK_WIDTH_MAX'] = [120, 70, 200]  # Max FWHM per peak
                                   # Single value: applies to all peaks
                                   # List: [80, 120] for different max per peak
 
@@ -81,7 +81,7 @@ args['USE_GPU'] = False  # Set to True if CUDA available
 # Optimizer
 args['OPTIMIZER'] = 'RAdam'  # 'RAdam', 'Adam', 'NAdam'
 args['LEARNING_RATE'] = 0.003
-args['NUM_ITERATIONS'] = 30000
+args['NUM_ITERATIONS'] = 70000
 args['USE_LR_SCHEDULER'] = False  # Optional: adaptive learning rate
 
 # Progress reporting
