@@ -991,25 +991,26 @@ def plot_spectrum(wavelengths: np.ndarray,
         elif fitting_model == 'fano':
             num_bright = sum(1 for key in params.keys() if 'bright' in key and '_lambda' in key)
             for i in range(1, num_bright + 1):
-       if f'bright{i}_lambda' in params:
+                if f'bright{i}_lambda' in params:
                     # 🔧 Intensity (coupling) 정보 추가
-                 = params.get(f'bright{i}_c', 0)
+                    c = params.get(f'bright{i}_c', 0)
                     param_text += f"Bright {i}: λ={params[f'bright{i}_lambda']:.1f} nm, γ={params[f'bright{i}_gamma']:.1f} nm, c={c:.2f}\n"
-            
+
             num_dark = sum(1 for key in params.keys() if 'dark' in key and '_lambda' in key)
             if num_dark > 0:
                 param_text += "\n"
-                for j in range(1, num_dark                if f'dark{j}_lambda' in params:
+                for j in range(1, num_dark + 1):
+                    if f'dark{j}_lambda' in params:
                         # 🔧 Intensity (d)와 Phase (θ) 정보 추가
-         d = params.get(f'dark{j}_d', 0)
+                        d = params.get(f'dark{j}_d', 0)
                         theta = params.get(f'dark{j}_theta', 0)
                         theta_pi = theta / np.pi  # radian → degree
                         param_text += f"Dark {j}: λ={params[f'dark{j}_lambda']:.1f} nm, Γ={params[f'dark{j}_Gamma']:.1f} nm\n"
-                        param_text += f"        d={d:.2f}, θ={theta_pi:.} π \n"
+                        param_text += f"        d={d:.2f}, θ={theta_pi:.2f} π \n"
         
         if param_text:
             ax.text(0.02, 0.98, param_text.strip(), transform=ax.transAxes,
-                   verlignment='top', fontsize=9,
+                   verticalalignment='top', fontsize=9,
                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout()
